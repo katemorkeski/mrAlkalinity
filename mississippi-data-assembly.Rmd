@@ -1,0 +1,77 @@
+---
+title: "mississippi-data-assembly"
+author: "Kate Morkeski"
+date: "`r Sys.Date()`"
+output: html_document
+---
+## Setup
+
+Libraries used
+
+```{r}
+
+library(here)
+library(readxl)
+#library(lubridate)
+library(tidyverse)
+#library(httr)
+
+```
+
+# Read in CTD and bottle data
+
+```{r}
+
+compiled <- read_excel(here('MSR_1_Compiled.xlsx')) 
+salinity <- read_excel(here('MSR_1_Salinity.xlsx')) 
+
+```
+
+# Create map
+
+```{r}
+
+# very generic state boundary
+# need more detailed map data
+us_map <- map_data("state")
+
+louisiana <- us_map %>% 
+  filter(region %in% "louisiana") 
+
+mouth <- louisiana %>% filter(long > -91.5 & lat < 30.5)
+
+mapping <- compiled %>% 
+  select(Station_ID, Cast_number, Niskin_ID, `Latitude [decimal degrees]`, `Longitude [decimal degrees]`, CTDSAL_PSS78) %>%
+  rename(station = Station_ID) %>%
+  rename(cast = Cast_number) %>%
+  rename(niskin = Niskin_ID) %>%
+  rename(lat = `Latitude [decimal degrees]`) %>%
+  rename(long = `Longitude [decimal degrees]`) 
+
+ggplot(louisiana, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_point(data = mapping, aes(x = long, y = lat, color = CTDSAL_PSS78)) +  
+  theme_minimal()
+
+ggplot(louisiana, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_point(data = mapping, aes(x = long, y = lat, color = station)) +  
+  theme_minimal()  
+  
+ggplot(mouth, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_point(data = mapping, aes(x = long, y = lat, color = CTDSAL_PSS78)) +  
+  theme_minimal()
+
+ggplot(mouth, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_point(data = mapping, aes(x = long, y = lat, color = station)) +  
+  theme_minimal()
+
+ggplot(mouth, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_path(data = mapping, aes(x = long, y = lat, color = CTDSAL_PSS78)) +  
+  theme_minimal()
+
+```
+
