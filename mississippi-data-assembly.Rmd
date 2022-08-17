@@ -21,9 +21,31 @@ library(tidyverse)
 # Read in CTD and bottle data
 
 ```{r}
-
 compiled <- read_excel(here('MSR_1_Compiled.xlsx')) 
-salinity <- read_excel(here('MSR_1_Salinity.xlsx')) 
+#salinity <- read_excel(here('MSR_1_Salinity.xlsx'))
+```
+
+# Format date and time
+
+```{r}
+
+compiled <- compiled %>%
+  rename(time_utc = "Time (UTC)") %>%
+  rename(station = Station_ID) %>%
+  rename(cast = Cast_number) %>%
+  rename(niskin = Niskin_ID) %>%
+  rename(lat = "Latitude [decimal degrees]") %>%
+  rename(long = "Longitude [decimal degrees]") 
+
+
+# combine date and time
+compiled$Date <- as.character(compiled$Date) 
+compiled$time_utc <- as.character(compiled$time_utc)
+compiled$time_utc <- gsub("1899-12-31 ", "", compiled$time_utc)
+compiled$date_time_utc <- paste(compiled$Date, compiled$time_utc)
+compiled$date_time_utc <- as.POSIXct(compiled$date_time_utc, tz = "GMT", format="%Y-%m-%d %H:%M:%OS")
+
+compiled <- compiled %>% relocate(date_time_utc, .before = station)
 
 ```
 
@@ -41,13 +63,8 @@ louisiana <- us_map %>%
 mouth <- louisiana %>% filter(long > -91.5 & lat < 30.5)
 
 mapping <- compiled %>% 
-  select(Station_ID, Cast_number, Niskin_ID, `Latitude [decimal degrees]`, `Longitude [decimal degrees]`, CTDSAL_PSS78) %>%
-  rename(station = Station_ID) %>%
-  rename(cast = Cast_number) %>%
-  rename(niskin = Niskin_ID) %>%
-  rename(lat = `Latitude [decimal degrees]`) %>%
-  rename(long = `Longitude [decimal degrees]`) 
-
+  select(station, cast, niskin, lat, long, CTDSAL_PSS78) 
+  
 ggplot(louisiana, aes(x = long, y = lat)) +
   geom_path() +
   geom_point(data = mapping, aes(x = long, y = lat, color = CTDSAL_PSS78)) +  
@@ -65,12 +82,19 @@ ggplot(mouth, aes(x = long, y = lat)) +
 
 ggplot(mouth, aes(x = long, y = lat)) +
   geom_path() +
-  geom_point(data = mapping, aes(x = long, y = lat, color = station)) +  
+  geom_text(data = mapping, aes(x = long, y = lat, label = station)) +  
+  theme_minimal()
+
+ggplot(mouth, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_text(data = mapping, aes(x = long, y = lat, label = station), size = 3) +  
+  coord_fixed(xlim = c(-90.0, -89.25), ylim = c(28.5, 29.25))+
   theme_minimal()
 
 ggplot(mouth, aes(x = long, y = lat)) +
   geom_path() +
   geom_path(data = mapping, aes(x = long, y = lat, color = CTDSAL_PSS78)) +  
+  coord_fixed(xlim = c(-90.0, -89.25), ylim = c(28.5, 29.25))+
   theme_minimal()
 
 ```
