@@ -49,6 +49,18 @@ compiled <- compiled %>% relocate(date_time_utc, .before = station)
 
 ```
 
+# Correct apparent error in Station 6 coordinate
+
+```{r}
+
+# cast 6, niskin 6 entered with lat/long identical to station 7 entries
+compiled <- compiled %>% 
+  mutate(lat = replace(lat, station == 6 & niskin == 6, 29.35218)) %>%
+  mutate(long = replace(lat, station == 6 & niskin == 6, -89.46450))  
+ 
+
+```
+
 # Create map
 
 ```{r}
@@ -97,5 +109,26 @@ ggplot(mouth, aes(x = long, y = lat)) +
   coord_fixed(xlim = c(-90.0, -89.25), ylim = c(28.5, 29.25))+
   theme_minimal()
 
+
 ```
+
+
+
+# Towards join with GO data
+
+```{r}
+
+GOfiles <- dir(here("MSR_GO_data/"), "*.txt") # get file names
+
+GOdata <- GOfiles %>% map_dfr(~ read_tsv(here("MSR_GO_data/", .)))
+
+```
+
+```{r}
+
+# combine date and time
+
+```
+
+
 
