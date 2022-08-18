@@ -35,8 +35,8 @@ compiled <- compiled %>%
   rename(cast = Cast_number) %>%
   rename(niskin = Niskin_ID) %>%
   rename(lat = "Latitude [decimal degrees]") %>%
-  rename(long = "Longitude [decimal degrees]") 
-
+  rename(long = "Longitude [decimal degrees]") %>%
+  rename(temperature = "CTD_Potential_Temp [deg_C]") 
 
 # combine date and time
 compiled$Date <- as.character(compiled$Date) 
@@ -56,7 +56,7 @@ compiled <- compiled %>% relocate(date_time_utc, .before = station)
 # cast 6, niskin 6 entered with lat/long identical to station 7 entries
 compiled <- compiled %>% 
   mutate(lat = replace(lat, station == 6 & niskin == 6, 29.35218)) %>%
-  mutate(long = replace(lat, station == 6 & niskin == 6, -89.46450))  
+  mutate(long = replace(long, station == 6 & niskin == 6, -89.46450))  
  
 
 ```
@@ -75,7 +75,7 @@ louisiana <- us_map %>%
 mouth <- louisiana %>% filter(long > -91.5 & lat < 30.5)
 
 mapping <- compiled %>% 
-  select(station, cast, niskin, lat, long, CTDSAL_PSS78) 
+  select(date_time_utc, station, cast, niskin, lat, long, temperature, CTDSAL_PSS78) 
   
 ggplot(louisiana, aes(x = long, y = lat)) +
   geom_path() +
@@ -112,6 +112,16 @@ ggplot(mouth, aes(x = long, y = lat)) +
 
 ```
 
+# Label stations
+
+```{r}
+mapping <- mapping %>%
+  mutate(leg = case_when(station <10 ~ "river",
+                         station == 10 ~ "gulf",
+                         station > 14 ~ "gulf",
+                         TRUE ~ "spur"))
+  
+```
 
 
 # Towards join with GO data
@@ -120,15 +130,156 @@ ggplot(mouth, aes(x = long, y = lat)) +
 
 GOfiles <- dir(here("MSR_GO_data/"), "*.txt") # get file names
 
-GOdata <- GOfiles %>% map_dfr(~ read_tsv(here("MSR_GO_data/", .)))
+GOdata <- GOfiles %>% map_dfr(~ read_tsv(here("MSR_GO_data/", .), show_col_types = FALSE, ))
 
 ```
 
 ```{r}
 
+GOdata <- rename(GOdata, PC_Date = "PC Date")
+GOdata <- rename(GOdata, PC_Time = "PC Time")
+
 # combine date and time
+GOdata$PC_Date <- as.character(GOdata$PC_Date) 
+GOdata$PC_Time <- as.character(GOdata$PC_Time) 
+GOdata$date_time_utc <- paste(GOdata$PC_Date, GOdata$PC_Time)
+GOdata$date_time_utc <- as.POSIXct(GOdata$date_time_utc, tz = "GMT", format="%d/%m/%y %H:%M:%OS")
 
 ```
+# Match bottle data by time
+
+## TODO: use lat long to calculate cruise distance, and interpolate that way instead
+
+```{r}
+
+  # match bottle data to GO data based on datetime
+  # get lat, long, T, S from bottle data
+  
+  for (i in 1:nrow(GOdata)) {
+    
+    GOdata$ind[i] <- which.min(abs(GOdata$date_time_utc[i] - mapping$date_time_utc))
+   
+  }
+
+mapping$row_num <- seq.int(nrow(mapping))
+mapping$bottlerow <- as.character(mapping$row_num)
+GOdata$bottlerow <- as.character(GOdata$ind)
+
+GOplus <- left_join(GOdata, mapping, by = "bottlerow")
+                    
+
+```
+
+# check time difference between GO system and nearest CTD time
+# Label records more than 1 hr from a station
+# Isolate data from equilibrator 
+
+```{r}
+
+GOplus$date_time_num <- as.numeric(GOplus$date_time_utc.x)
+GOplus$time_diff <- (GOplus$date_time_utc.x - GOplus$date_time_utc.y)
+GOplus$time_diff_num <- abs(as.numeric(GOplus$time_diff))
+GOplus$time_diff_min <- GOplus$time_diff_num/60
+GOplus$time_diff_hrs <- GOplus$time_diff_num/3600
+
+hist(GOplus$time_diff_hrs)
+
+GOplus <- GOplus %>%
+  mutate(date_time_utc.y = replace(date_time_utc.y, time_diff_hrs > 1, NA))  %>%
+  mutate(lat = replace(lat, time_diff_hrs > 1, NA))  %>%
+  mutate(long = replace(long, time_diff_hrs > 1, NA))  %>%
+  mutate(temperature = replace(temperature, time_diff_hrs > 1, NA))  %>%
+  mutate(CTDSAL_PSS78 = replace(CTDSAL_PSS78, time_diff_hrs > 1, NA))  %>%
+  mutate(station = replace(station, time_diff_hrs > 1, NA)) %>%
+  mutate(cast = replace(cast, time_diff_hrs > 1, NA)) %>%
+  mutate(niskin = replace(niskin, time_diff_hrs > 1, NA)) %>%
+  mutate(leg = replace(leg, time_diff_hrs > 1, "> 1 hr from station")) %>%
+  mutate(leg = replace(leg, date_time_num < 1652200657, "transit"))
+#Based on GO log sheets, river data begin after 2022-05-10 16:37:37, which is 1652200657 in numeric format
+
+GOplus <- GOplus %>% rename(CO2_ppm = "CO2 um/m")
+
+GO_EQU_plus <- GOplus %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
+
+```
+# Plot all GO EQU data
+
+```{r}
+
+ggplot(mouth, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_point(data = GO_EQU_plus, aes(x = long, y = lat, color = CO2_ppm)) + 
+    scale_color_gradient(low="orange", high="darkred") +
+  theme_minimal()  
+
+ggplot(GO_EQU_plus, aes(x = date_time_utc.x, y = CO2_ppm, color = leg))+
+  geom_point()+
+  scale_color_manual(values = c("black", "darkturquoise", "chartreuse3", "yellow", "gray50"))+
+  theme_minimal()
+
+ggplot(GO_EQU_plus, aes(x = date_time_utc.y, y = CO2_ppm, color = leg))+
+  geom_point()+
+  scale_color_manual(values = c("black", "darkturquoise", "chartreuse3", "yellow", "gray50"))+
+  theme_minimal()
+
+
+```
+
+```{r}
+
+
+GO_EQU_cruise <- GO_EQU_plus %>% filter(leg != "transit")
+
+```
+
+# Plot data with pre-river data excluded
+
+```{r}
+
+ggplot(mouth, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_point(data = GO_EQU_cruise, aes(x = long, y = lat, color = CO2_ppm)) + 
+    scale_color_gradient(low="orange", high="darkred") +
+  theme_minimal()  
+
+ggplot(GO_EQU_cruise, aes(x = date_time_utc.x, y = CO2_ppm, color = leg))+
+  geom_point()+
+  scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
+  theme_minimal()
+
+ggplot(GO_EQU_cruise, aes(x = date_time_utc.y, y = CO2_ppm, color = leg))+
+  geom_point()+
+  scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
+  theme_minimal()
+
+ggplot(GO_EQU_cruise, aes(x = date_time_utc.x, y = temperature, color = leg))+
+  geom_point()+
+  scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
+  theme_minimal()
+
+ggplot(GO_EQU_cruise, aes(x = date_time_utc.x, y = CTDSAL_PSS78, color = leg))+
+  geom_point()+
+  scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
+  theme_minimal()
+
+
+```
+
+# Export file for GO processing
+
+```{r}
+
+GO_out <- GOplus %>% 
+  rename("CO2 um/m" = CO2_ppm) %>%
+  rename(date_time_utc = date_time_utc.x) %>%
+  select(-ind, -bottlerow, -date_time_utc.y, -row_num, -date_time_num, -time_diff, -time_diff_num, -time_diff_min, -time_diff_hrs)
+
+write.csv(GO_out, here('GO_Mississippi_May.csv'), row.names = FALSE)
+
+```
+
+
+
 
 
 
