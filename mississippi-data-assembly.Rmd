@@ -12,11 +12,10 @@ Libraries used
 
 library(here)
 library(readxl)
-#library(lubridate)
 library(tidyverse)
-#library(httr)
 
 ```
+## May cruise
 
 # Read in CTD and bottle data
 
@@ -36,7 +35,8 @@ compiled <- compiled %>%
   rename(niskin = Niskin_ID) %>%
   rename(lat = "Latitude [decimal degrees]") %>%
   rename(long = "Longitude [decimal degrees]") %>%
-  rename(temperature = "CTD_Potential_Temp [deg_C]") 
+  rename(temperature = "CTD_Potential_Temp [deg_C]") %>%
+  rename(depth_m = "Depth [m]")
 
 # combine date and time
 compiled$Date <- as.character(compiled$Date) 
@@ -75,7 +75,7 @@ louisiana <- us_map %>%
 mouth <- louisiana %>% filter(long > -91.5 & lat < 30.5)
 
 mapping <- compiled %>% 
-  select(date_time_utc, station, cast, niskin, lat, long, temperature, CTDSAL_PSS78) 
+  select(date_time_utc, station, cast, niskin, lat, long, temperature, depth_m, CTDSAL_PSS78) 
   
 ggplot(louisiana, aes(x = long, y = lat)) +
   geom_path() +
@@ -128,9 +128,9 @@ mapping <- mapping %>%
 
 ```{r}
 
-GOfiles <- dir(here("MSR_GO_data/"), "*.txt") # get file names
+GOfiles <- dir(here("MSR_GO_data_May/"), "*.txt") # get file names
 
-GOdata <- GOfiles %>% map_dfr(~ read_tsv(here("MSR_GO_data/", .), show_col_types = FALSE, ))
+GOdata <- GOfiles %>% map_dfr(~ read_tsv(here("MSR_GO_data_May/", .), show_col_types = FALSE, ))
 
 ```
 
@@ -269,15 +269,241 @@ ggplot(GO_EQU_cruise, aes(x = date_time_utc.x, y = CTDSAL_PSS78, color = leg))+
 
 ```{r}
 
-GO_out <- GOplus %>% 
-  rename("CO2 um/m" = CO2_ppm) %>%
+# GO_out <- GOplus %>% 
+#   rename("CO2 um/m" = CO2_ppm) %>%
+#   rename(date_time_utc = date_time_utc.x) %>%
+#   select(-ind, -bottlerow, -date_time_utc.y, -row_num, -date_time_num, -time_diff, -time_diff_num, -time_diff_min, -time_diff_hrs)
+# 
+# write.csv(GO_out, here('GO_Mississippi_May.csv'), row.names = FALSE)
+# 
+# GO_out <- GO_out %>% filter(leg != "transit") %>%
+#                     filter(leg != "> 1 hr from station")
+# 
+# write.csv(GO_out, here('GO_Mississippi_May_near_stations.csv'), row.names = FALSE)
+
+```
+
+
+
+```{r}
+
+# combine station and cast later
+
+GOplus <- GOplus %>% filter(leg != "transit") 
+   
+GOplus <- GOplus %>% 
+  group_by(station, cast, niskin) %>%
+  mutate(min_time_diff = min(time_diff_num)) %>%
+  ungroup()
+
+closest_niskin <- GOplus %>% 
+  group_by(station, cast, niskin) %>%
+  summarize(min(time_diff_num)) 
+
+GOplus$nearest_niskin <- NA_integer_
+
+GOplus <- GOplus %>%
+  mutate(nearest_niskin = case_when(time_diff_num == min_time_diff ~ niskin))
+
+GOplus <- GOplus %>% 
   rename(date_time_utc = date_time_utc.x) %>%
-  select(-ind, -bottlerow, -date_time_utc.y, -row_num, -date_time_num, -time_diff, -time_diff_num, -time_diff_min, -time_diff_hrs)
+  select(-niskin, -ind, -bottlerow, -date_time_utc.y, -row_num, -date_time_num, -time_diff, -time_diff_num, -time_diff_min, -time_diff_hrs, -min_time_diff)
+
+# remove CTD parameters for non-niskin locations
+GOplus$date_time_utc <- replace(GOplus$date_time_utc, is.na(GOplus$nearest_niskin), NA)
+GOplus$station <- replace(GOplus$station, is.na(GOplus$nearest_niskin), NA)
+GOplus$cast <- replace(GOplus$cast, is.na(GOplus$nearest_niskin), NA)
+GOplus$lat <- replace(GOplus$lat, is.na(GOplus$nearest_niskin), NA)
+GOplus$long <- replace(GOplus$long, is.na(GOplus$nearest_niskin), NA)
+GOplus$temperature <- replace(GOplus$temperature, is.na(GOplus$nearest_niskin), NA)
+GOplus$depth_m <- replace(GOplus$depth_m, is.na(GOplus$nearest_niskin), NA)
+GOplus$CTDSAL_PSS78 <- replace(GOplus$CTDSAL_PSS78, is.na(GOplus$nearest_niskin), NA)
+GOplus$leg <- replace(GOplus$leg, is.na(GOplus$nearest_niskin), NA)
+
+# Check distribution of depth
+hist(GOplus$depth_m)
+
+# check relationship of temperature with depth
+ggplot(GOplus, aes(x = depth_m, y = temperature, color = leg))+
+  geom_point()+
+  theme_minimal()
+# temperature more strongly controlled by habitat than by depth
+
+GO_out <- GOplus %>% 
+  rename("CO2 um/m" = CO2_ppm)
+
+# replace NAs with -999 for Matlab
+GO_out <- GO_out %>% mutate(station = case_when(is.na(station) ~ -999, TRUE ~ station)) %>% 
+                      mutate(cast = case_when(is.na(cast) ~ -999, TRUE ~ cast)) %>% 
+                      mutate(lat = case_when(is.na(lat) ~ -999, TRUE ~ lat)) %>% 
+                      mutate(long = case_when(is.na(long) ~ -999, TRUE ~ long)) %>% 
+                      mutate(temperature = case_when(is.na(temperature) ~ -999, TRUE ~ temperature)) %>% 
+                      mutate(depth_m = case_when(is.na(depth_m) ~ -999, TRUE ~ depth_m)) %>% 
+                      mutate(CTDSAL_PSS78 = case_when(is.na(CTDSAL_PSS78) ~ -999, TRUE ~ CTDSAL_PSS78) )
+
+GO_out <- GO_out %>% 
+  filter(Type != "SHUT DOWN") 
 
 write.csv(GO_out, here('GO_Mississippi_May.csv'), row.names = FALSE)
 
 ```
+```{r}
+# read in data processed with pCO2 Sys
 
+xCO2 <- read.csv(here('MSP_20220510_Working_inter_stds.csv'))
+
+xCO2_EQU <- xCO2 %>% 
+  filter(Type == "EQU") 
+  
+# convert -999 to NA  
+ xCO2_EQU <- na_if(xCO2_EQU, "-999")
+ 
+ # calculate difference between corrected and raw CO2
+ xCO2_EQU <- xCO2_EQU %>%
+   mutate(xdiff = xCO2.corr - CO2.um.m)
+
+
+```
+
+```{r}
+
+ggplot(xCO2_EQU, aes(x = YDay.Calc, y = xCO2.corr, color = "corrected xCO2"))+
+  geom_point()+
+  geom_point(aes(x = YDay.Calc, y = CO2.um.m, color = "raw CO2 um/m")) +
+  theme_minimal()
+
+ggplot(xCO2_EQU, aes(x = YDay.Calc, y = xdiff)) + geom_point()+theme_minimal()
+
+ggplot(mouth, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_point(data = xCO2_EQU, aes(x = long, y = lat, color = CO2.um.m)) + 
+    scale_color_gradient(low="orange", high="darkred") +
+  theme_minimal() 
+
+
+ggplot(mouth, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_point(data = xCO2_EQU, aes(x = long, y = lat, color = xCO2.corr)) + 
+    scale_color_gradient(low="orange", high="darkred") +
+  theme_minimal()
+
+```
+
+## October cruise
+
+# Pro Oceanus pCO2
+```{r}
+
+# read Pro Oceanus pCO2 data
+POceanus <- read.csv(here('20221012pco2.csv')) 
+
+# delete first row
+POceanus <- POceanus[-(1),]
+POceanus <- POceanus[-(69135:69147),]
+
+# delete rows before underway water flowing
+POceanus <- POceanus[-(1:5351),] #noon
+
+```
+# combine date time info and set column types
+
+```{r}
+
+POceanus$date_time <- paste(POceanus$Year, "-" ,POceanus$Month, "-", POceanus$Day, "x", POceanus$Hour, ":", POceanus$Minute, ":", POceanus$Second)
+POceanus <- POceanus %>% relocate(date_time, .before = "Zero.A.D")
+
+POceanus$date_time <- gsub(" ", "", POceanus$date_time)
+POceanus$date_time <- gsub("x", " ", POceanus$date_time)
+
+POceanus$date_time <- as.POSIXct(POceanus$date_time, format="%Y-%m-%d %H:%M:%OS")
+
+POceanus$CO2 <- as.double(POceanus$CO2)
+POceanus$Humidity <- as.double(POceanus$Humidity)
+POceanus$Cell.gas.pressure <- as.double(POceanus$Cell.gas.pressure)
+POceanus$IRGA.temperature <- as.double(POceanus$IRGA.temperature)
+POceanus$Day <- as.double(POceanus$Day)
+
+```
+
+
+# Plot Pro Oceanus data
+
+```{r}
+
+ggplot(POceanus, aes(x = date_time, y = CO2))+
+  geom_point()+
+  theme_minimal()
+
+ggplot(POceanus, aes(x = date_time, y = Humidity))+
+  geom_point()+
+  theme_minimal()
+
+ggplot(POceanus, aes(x = date_time, y = Cell.gas.pressure))+
+  geom_point()+
+  theme_minimal()
+
+scale = 0.2    
+ggplot(POceanus, aes(x = date_time, y = CO2)) +
+  geom_point(aes(color = "pCO2 ppm")) +
+  geom_point(aes(y = Cell.gas.pressure/scale, color = "Cell gas pressure")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*scale, name="pressure")) +
+  labs(x = "Date and Time", y = "pCO2 ppm", color = "") +
+  scale_color_manual(values = c("orange2", "gray30"))+
+  theme_minimal()
+  
+
+ggplot(POceanus, aes(x = date_time, y = IRGA.temperature))+
+  geom_point()+
+  theme_minimal()
+
+scale = 0.005
+ggplot(POceanus, aes(x = date_time, y = CO2)) +
+  geom_point(aes(color = "pCO2 ppm")) +
+  geom_point(aes(y = Humidity/scale, color = "Humidity")) +
+  #scale_x_continuous(breaks = seq(0, 336, 24)) +
+  scale_y_continuous(sec.axis = sec_axis(~.*scale, name="Humidity (units)")) +
+  labs(x = "Date and Time", y = "pCO2 ppm", color = "") +
+  scale_color_manual(values = c("orange2", "gray30"))+
+  theme_minimal()
+
+
+```
+# data cleaning steps
+
+```{r}
+
+outliers <- POceanus %>% filter(CO2 > 4000)
+
+# two outliers with CO2 > 4000, 
+  # second at 2022-10-12 06:57:16 when instrument was started for the day # filter this one out
+  # first at 2022-10-11 19:29:13
+        # was this a zero? 
+        # after this, CO2 and pressure drop, and take a while to stabilize again (circa 1 hr)
+        # CO2 seems to return to where it was
+
+POceanus_11 <- POceanus %>% filter(Day < 12)
+ggplot(POceanus_11, aes(x = date_time, y = CO2))+
+  geom_point()+
+  theme_minimal()
+
+scale = 0.05    
+ggplot(POceanus_11, aes(x = date_time, y = CO2)) +
+  geom_point(aes(color = "pCO2 ppm")) +
+  geom_point(aes(y = (Cell.gas.pressure-800)/scale, color = "Cell gas pressure")) +
+  scale_y_continuous(sec.axis = sec_axis(~800+.*scale, breaks = seq(800, 1300, 50), name="pressure")) +
+  labs(x = "Date and Time", y = "pCO2 ppm", color = "") +
+  scale_color_manual(values = c("orange2", "gray30"))+
+  theme_minimal()
+
+# filter out points above 4k
+POceanus_11_under4k <- POceanus_11 %>% filter(CO2 < 4000)
+ggplot(POceanus_11_under4k, aes(x = date_time, y = CO2))+
+  geom_point()+
+  theme_minimal()
+
+#TODO: clean up long equilibration period after 2022-10-11 19:29:13
+
+```
 
 
 
