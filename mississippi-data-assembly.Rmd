@@ -13,6 +13,7 @@ Libraries used
 library(here)
 library(readxl)
 library(tidyverse)
+library(geosphere)
 
 ```
 ## May cruise
@@ -43,7 +44,7 @@ compiled$Date <- as.character(compiled$Date)
 compiled$time_utc <- as.character(compiled$time_utc)
 compiled$time_utc <- gsub("1899-12-31 ", "", compiled$time_utc)
 compiled$date_time_utc <- paste(compiled$Date, compiled$time_utc)
-compiled$date_time_utc <- as.POSIXct(compiled$date_time_utc, tz = "GMT", format="%Y-%m-%d %H:%M:%OS")
+compiled$date_time_utc <- as.POSIXct(compiled$date_time_utc, tz = "UTC", format="%Y-%m-%d %H:%M:%OS")
 
 compiled <- compiled %>% relocate(date_time_utc, .before = station)
 
@@ -132,6 +133,7 @@ GOfiles <- dir(here("MSR_GO_data_May/"), "*.txt") # get file names
 
 GO_May <- GOfiles %>% map_dfr(~ read_tsv(here("MSR_GO_data_May/", .), show_col_types = FALSE, ))
 
+
 ```
 
 ```{r}
@@ -143,7 +145,9 @@ GO_May <- rename(GO_May, PC_Time = "PC Time")
 GO_May$PC_Date <- as.character(GO_May$PC_Date) 
 GO_May$PC_Time <- as.character(GO_May$PC_Time) 
 GO_May$date_time_utc <- paste(GO_May$PC_Date, GO_May$PC_Time)
-GO_May$date_time_utc <- as.POSIXct(GO_May$date_time_utc, tz = "GMT", format="%d/%m/%y %H:%M:%OS")
+GO_May$date_time_utc <- as.POSIXct(GO_May$date_time_utc, tz = "UTC", format="%d/%m/%y %H:%M:%OS")
+
+# GO system clock was likely not set at start of deployment, so recorded time should be considered approximately but not exactly UTC
 
 ```
 # Match bottle data by time
@@ -202,8 +206,58 @@ GOplus <- GOplus %>% rename(CO2_ppm = "CO2 um/m")
 GO_EQU_plus <- GOplus %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
 
 ```
-# Plot all GO EQU data
+# Calculate cruise distance
 
+```{r}
+
+GOplus_coord <- GOplus %>% filter(!is.na(long) & !is.na(lat) )
+ 
+
+for (i in 1:nrow(GOplus_coord)) {
+  df_lon <- GOplus_coord$long[i]
+  df_lat <- GOplus_coord$lat[i]
+  GOplus_coord$cruise_dist_km <- as.integer(NA)
+  {
+  df_lon_lat <- c(df_lon,df_lat)
+  km_cruise[i] <- distHaversine(c(-89.9587,29.90158), df_lon_lat, r=6378.137)
+  }
+  GOplus_coord$cruise_dist_km <- km_cruise
+  
+}
+
+GOplus_coord_EQU <- GOplus_coord %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
+
+
+# for (i in 1:nrow(GOplus)) {
+#   df_lon <- GOplus$long[i]
+#   df_lat <- GOplus$lat[i]
+#   GOplus$cruise_dist_km <- as.integer(NA)
+#  
+#   if (is.na(df_lon) & is.na(df_lat)) 
+#     {next}
+#   else
+#   
+#   if (!is.na(df_lon) & !is.na(df_lat)) 
+#     {
+#     df_lon_lat <- c(df_lon,df_lat)
+#     km_cruise[i] <- distHaversine(c(-89.9587,29.90158), df_lon_lat, r=6378.137)}
+#     
+#    GOplus$cruise_dist_km <- km_cruise
+# }
+
+
+ggplot(GOplus_coord_EQU, aes(x = lat, y = CO2_ppm))+
+  geom_point()+
+   theme_minimal()
+
+ggplot(GOplus_coord_EQU, aes(x = cruise_dist_km, y = CO2_ppm))+
+  geom_point()+
+   theme_minimal()
+
+
+
+```
+# Plot all GO EQU data
 ```{r}
 
 ggplot(mouth, aes(x = long, y = lat)) +
@@ -258,6 +312,11 @@ ggplot(GO_EQU_cruise, aes(x = date_time_utc.x, y = temperature, color = leg))+
   theme_minimal()
 
 ggplot(GO_EQU_cruise, aes(x = date_time_utc.x, y = CTDSAL_PSS78, color = leg))+
+  geom_point()+
+  scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
+  theme_minimal()
+
+ggplot(GO_EQU_cruise, aes(x = lat, y = CO2_ppm, color = leg))+
   geom_point()+
   scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
   theme_minimal()
@@ -583,6 +642,55 @@ ggplot(GO_Oct_STD, aes(x = date_time_gmt, y = CO2_ppm))+
 ggplot(GO_Oct_EQU, aes(x= date_time_gmt, y = CO2_ppm, color = "General Oceanics"))+ geom_point() +geom_point(data = POceanus_under4k, aes(color = "Pro Oceanus"))
 
 ```
+# Read in GPS data
+
+```{r}
+
+gps_oct <- read_delim("sync_gps_ctd_oct.txt", show_col_types = FALSE)
+
+gps_oct$dist_km <- gps_oct$Distancem/1000
+
+gps_oct <- gps_oct %>% relocate(dist_km, .after = "Distancem")
+
+```
+
+
+
+```{r}
+# match gps data to GO data based on datetime
+
+for (i in 1:nrow(GO_Oct_EQU)) {
+  
+  GO_Oct_EQU$ind[i] <- which.min(abs(GO_Oct_EQU$date_time_gmt[i] - gps_oct$DateGMT))
+  
+}
+
+gps_oct$row_num <- seq.int(nrow(gps_oct))
+gps_oct$bottlerow <- as.character(gps_oct$row_num)
+GO_Oct_EQU$bottlerow <- as.character(GO_Oct_EQU$ind)
+
+GO_Oct_EQU_gps <- left_join(GO_Oct_EQU, gps_oct, by = "bottlerow")
+
+# mapping$row_num <- seq.int(nrow(mapping))
+# mapping$bottlerow <- as.character(mapping$row_num)
+# GO_May$bottlerow <- as.character(GO_May$ind)
+# 
+# GOplus <- left_join(GO_May, mapping, by = "bottlerow")
+
+```
+
+```{r}
+
+ggplot(GO_Oct_EQU_gps, aes(x = Latitude, y = CO2_ppm))+
+  geom_point()+
+  theme_minimal()
+
+ggplot(GO_Oct_EQU_gps, aes(x = dist_km, y = CO2_ppm))+
+  geom_point()+
+  theme_minimal()
+
+```
+
 
 
 
