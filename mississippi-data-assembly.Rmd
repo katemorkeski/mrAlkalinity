@@ -253,8 +253,10 @@ MSY_met <- rename(MSY_met, datetime = valid)
 # the time zone for the met data is UTC. The ALT data column is "altimeter" (inches) which I think is a standardized way of measuring pressure, so I'm hoping there's a conversion to atmospheric pressure. Looking for one now.
 
 # setting time zone to GMT 
-MSY_met$datetime <- strptime(MSY_met$datetime,"%m/%d/%Y %R", tz = "GMT")
-rig_met$datetime <- strptime(rig_met$datetime,"%m/%d/%Y %R", tz = "GMT")
+MSY_met$datetime <- strptime(MSY_met$datetime,"%m/%d/%Y %R")
+rig_met$datetime <- strptime(rig_met$datetime,"%m/%d/%Y %R")
+tz(MSY_met$datetime) <- "America/New_York"
+tz(rig_met$datetime) <- "America/New_York"
 
 rig_met$alti <- as.numeric(rig_met$alti)
 MSY_met$mslp <- as.numeric(MSY_met$mslp)
@@ -448,21 +450,9 @@ ggplot(Oct_MSY_met, aes(x = datetime, y = Patm, color = "MSY")) +
 ```
 
 
-# Export met data for pCO2sys
-
 ```{r}
 
-# write.csv(May_Patm, "May_Patm.csv", row.names = FALSE)
-# write.table(May_Patm, "May_Patm.txt", row.names = FALSE)
-# 
-# write.table(Oct_Patm, "Oct_Patm.txt", row.names = FALSE)
-
-```
-
-
-```{r}
-
-# instead, try joining here before pCO2sys
+# interpolate atmospheric pressure to GO data time stamps
 
 GO <- read.csv("MAY_lat_long_temp_sal_Tin_air_Working.csv")
 GO$date_time_utc <- as.POSIXct(GO$date_time_utc, format= "%Y-%m-%d %H:%M:%S")
@@ -471,11 +461,16 @@ GO_Patm <- data.frame(approx(May_Patm$datetime, May_Patm$Patm_avg, xout = GO$dat
 
 GO <- cbind(GO, GO_Patm)
 
+ggplot(GO, aes(x = x, y = y, color = "Patm")) +
+  geom_point() + 
+  geom_point(data = GO, aes(x = date_time_utc, y = licor.press, color = "Plicor")) + 
+  theme_minimal()
+
 GO <- GO %>% 
   select(-x) %>%
   rename(Patm = y)  
 
-write.csv(GO, here('MAY_lat_long_temp_sal_Tin_air_Working_Patm.csv'), row.names = FALSE)
+#write.csv(GO, here('MAY_lat_long_temp_sal_Tin_air_Working_Patm.csv'), row.names = FALSE)
 
 ```
 
@@ -485,7 +480,6 @@ write.csv(GO, here('MAY_lat_long_temp_sal_Tin_air_Working_Patm.csv'), row.names 
 ```{r}
 
 GO <- read.csv("MAY_lat_long_temp_sal_Tin_air_Working.csv")
-
 
 # Isolate data from equilibrator
 
