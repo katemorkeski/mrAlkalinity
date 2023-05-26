@@ -15,6 +15,7 @@ library(readxl)
 library(tidyverse)
 library(geosphere)
 library(lubridate)
+library(stats)
 
 ```
 ## May cruise
@@ -127,10 +128,10 @@ mapping <-mapping %>%
   mutate(surface = case_when(station < 15 & depth_m < 3 ~ "Y",
                              station > 14 & depth_m < 2 ~ "Y",
                              TRUE ~ "N"
-                              )) 
+  )) 
 
 surface_bottles <-mapping %>% filter(surface == "Y")
-                          
+
 surface_bottles <- surface_bottles %>% select(-surface)
 
 ```
@@ -198,7 +199,7 @@ ctd_check <- GOplus %>%
 ```
 
 # Label records collected prior to entering the river
- 
+
 ```{r}
 
 #Based on GO log sheets, river data begin after 2022-05-10 16:37:37, which is 1652200657 in numeric format
@@ -239,12 +240,19 @@ write.csv(GO_out, here('GO_Mississippi_May.csv'), row.names = FALSE)
 
 ```{r}
 
+GO_out <- read_csv('GO_Mississippi_May.csv')
+
+#https://mesonet.agron.iastate.edu/request/download.phtml?network=LA_ASOS
+# one site is MSY airport and the other Is a rig/platform south of the estuary (named DSF). 
+
 MSY_met <- read.csv("MSY_Met.csv")
 rig_met <- read.csv("MSR_Met_Data.csv")
 
 MSY_met <- rename(MSY_met, datetime = valid)
 
-# setting time zone to GMT but need confirm that this is accurate
+# the time zone for the met data is UTC. The ALT data column is "altimeter" (inches) which I think is a standardized way of measuring pressure, so I'm hoping there's a conversion to atmospheric pressure. Looking for one now.
+
+# setting time zone to GMT 
 MSY_met$datetime <- strptime(MSY_met$datetime,"%m/%d/%Y %R", tz = "GMT")
 rig_met$datetime <- strptime(rig_met$datetime,"%m/%d/%Y %R", tz = "GMT")
 
@@ -296,20 +304,20 @@ met_stns <- data.frame(station, long, lat)
 # plot 2022 pressure data from both sites
 ggplot(MSY_met, aes(x = datetime, y = alti, color = "MSY")) +
   geom_point() +
-geom_point(data = rig_met, aes(x = datetime, y = alti, color = "rig")) + 
+  geom_point(data = rig_met, aes(x = datetime, y = alti, color = "rig")) + 
   theme_minimal()
 
 # plot 2022 wind data from both sites
 ggplot(MSY_met, aes(x = datetime, y = speed_mph, color = "MSY")) +
   geom_point() +
-geom_point(data = rig_met, aes(x = datetime, y = speed_mph, color = "rig")) + 
+  geom_point(data = rig_met, aes(x = datetime, y = speed_mph, color = "rig")) + 
   theme_minimal()
 
 # plot pressure data from May cruise dates
 # alti
 ggplot(May_MSY_met, aes(x = datetime, y = alti, color = "MSY")) +
   geom_point() +
-geom_point(data = May_rig_met, aes(x = datetime, y = alti, color = "rig")) + 
+  geom_point(data = May_rig_met, aes(x = datetime, y = alti, color = "rig")) + 
   theme_minimal()
 # mslp
 ggplot(May_MSY_met, aes(x = datetime, y = mslp, color = "MSY")) +
@@ -343,7 +351,7 @@ ggplot(Oct_MSY_met, aes(x = datetime, y = alti)) +
 # alti
 ggplot(Oct_MSY_met, aes(x = datetime, y = alti, color = "MSY")) +
   geom_point() +
-geom_point(data = Oct_rig_met, aes(x = datetime, y = alti, color = "rig")) + 
+  geom_point(data = Oct_rig_met, aes(x = datetime, y = alti, color = "rig")) + 
   theme_minimal()
 # mslp
 ggplot(Oct_MSY_met, aes(x = datetime, y = mslp, color = "MSY")) +
@@ -356,6 +364,118 @@ ggplot(mouth, aes(x = long, y = lat)) +
   geom_text(data = mapping, aes(x = long, y = lat, label = station)) +  
   geom_text(data = met_stns, aes(x = long, y = lat, label = station))+
   theme_minimal()  
+
+```
+# Convert alti from inches Hg to mbar
+```{r}
+
+# multiply alti by 33.8639 to convert from inches Hg to mbar
+May_MSY_met <- May_MSY_met %>%
+  mutate(Patm = alti*33.8639)
+
+May_rig_met <- May_rig_met %>%
+  mutate(Patm = alti*33.8639)
+
+Oct_MSY_met <- Oct_MSY_met %>%
+  mutate(Patm = alti*33.8639)
+
+Oct_rig_met <- Oct_rig_met %>%
+  mutate(Patm = alti*33.8639)
+
+
+# plot pressure data 
+ggplot(May_MSY_met, aes(x = datetime, y = Patm, color = "MSY")) +
+  geom_point() + 
+  geom_point(data = May_rig_met, aes(x = datetime, y = Patm, color = "rig")) + 
+  theme_minimal()
+
+ggplot(Oct_MSY_met, aes(x = datetime, y = Patm, color = "MSY")) +
+  geom_point() + 
+  geom_point(data = Oct_rig_met, aes(x = datetime, y = Patm, color = "rig")) + 
+  theme_minimal()
+
+```
+# Interpolate met data and average across MSY and DSF stations
+
+```{r}
+# May
+May_MSY_Patm <- data.frame(approx(May_MSY_met$datetime, May_MSY_met$Patm, xout = May_rig_met$datetime, rule = 2, method = "linear"))
+
+May_rig_Patm <- May_rig_met %>% select(datetime, Patm)
+
+May_Patm <- cbind(May_MSY_Patm, May_rig_Patm)
+May_Patm <- May_Patm %>% 
+  rename(Patm_MSY = y) %>% 
+  rename(Patm_rig = Patm) 
+
+May_Patm <- May_Patm %>%
+  mutate(Patm_avg = (Patm_MSY + Patm_rig)/2)
+
+ggplot(May_Patm, aes(x = datetime, y = Patm_MSY, color = "MSY")) +
+  geom_point() + 
+  geom_point(data = May_Patm, aes(x = datetime, y = Patm_rig, color = "rig")) + 
+  geom_point(data = May_Patm, aes(x = datetime, y = Patm_avg, color = "avg")) + 
+  theme_minimal()
+
+ggplot(May_MSY_met, aes(x = datetime, y = Patm, color = "MSY")) +
+  geom_point() + 
+  geom_point(data = May_rig_met, aes(x = datetime, y = Patm, color = "rig")) + 
+  theme_minimal()
+
+# Oct
+Oct_MSY_Patm <- data.frame(approx(Oct_MSY_met$datetime, Oct_MSY_met$Patm, xout = Oct_rig_met$datetime, rule = 2, method = "linear"))
+
+Oct_rig_Patm <- Oct_rig_met %>% select(datetime, Patm)
+
+Oct_Patm <- cbind(Oct_MSY_Patm, Oct_rig_Patm)
+Oct_Patm <- Oct_Patm %>% 
+  rename(Patm_MSY = y) %>% 
+  rename(Patm_rig = Patm) 
+
+Oct_Patm <- Oct_Patm %>%
+  mutate(Patm_avg = (Patm_MSY + Patm_rig)/2)
+
+ggplot(Oct_Patm, aes(x = datetime, y = Patm_MSY, color = "MSY")) +
+  geom_point() + 
+  geom_point(data = Oct_Patm, aes(x = datetime, y = Patm_rig, color = "rig")) + 
+  geom_point(data = Oct_Patm, aes(x = datetime, y = Patm_avg, color = "avg")) + 
+  theme_minimal()
+
+ggplot(Oct_MSY_met, aes(x = datetime, y = Patm, color = "MSY")) +
+  geom_point() + 
+  geom_point(data = Oct_rig_met, aes(x = datetime, y = Patm, color = "rig")) + 
+  theme_minimal()
+```
+
+
+# Export met data for pCO2sys
+
+```{r}
+
+# write.csv(May_Patm, "May_Patm.csv", row.names = FALSE)
+# write.table(May_Patm, "May_Patm.txt", row.names = FALSE)
+# 
+# write.table(Oct_Patm, "Oct_Patm.txt", row.names = FALSE)
+
+```
+
+
+```{r}
+
+# instead, try joining here before pCO2sys
+
+GO <- read.csv("MAY_lat_long_temp_sal_Tin_air_Working.csv")
+GO$date_time_utc <- as.POSIXct(GO$date_time_utc, format= "%Y-%m-%d %H:%M:%S")
+
+GO_Patm <- data.frame(approx(May_Patm$datetime, May_Patm$Patm_avg, xout = GO$date_time_utc, rule = 2, method = "linear"))
+
+GO <- cbind(GO, GO_Patm)
+
+GO <- GO %>% 
+  select(-x) %>%
+  rename(Patm = y)  
+
+write.csv(GO, here('MAY_lat_long_temp_sal_Tin_air_Working_Patm.csv'), row.names = FALSE)
 
 ```
 
@@ -379,15 +499,15 @@ GO_EQU_plus <- GOplus %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
 ```{r}
 
 GOplus_coord <- GOplus %>% filter(!is.na(long) & !is.na(lat) )
- 
+
 
 for (i in 1:nrow(GOplus_coord)) {
   df_lon <- GOplus_coord$long[i]
   df_lat <- GOplus_coord$lat[i]
   GOplus_coord$cruise_dist_km <- as.integer(NA)
   {
-  df_lon_lat <- c(df_lon,df_lat)
-  km_cruise[i] <- distHaversine(c(-89.9587,29.90158), df_lon_lat, r=6378.137)
+    df_lon_lat <- c(df_lon,df_lat)
+    km_cruise[i] <- distHaversine(c(-89.9587,29.90158), df_lon_lat, r=6378.137)
   }
   GOplus_coord$cruise_dist_km <- km_cruise
   
@@ -416,11 +536,11 @@ GOplus_coord_EQU <- GOplus_coord %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
 
 ggplot(GOplus_coord_EQU, aes(x = lat, y = CO2_ppm))+
   geom_point()+
-   theme_minimal()
+  theme_minimal()
 
 ggplot(GOplus_coord_EQU, aes(x = cruise_dist_km, y = CO2_ppm))+
   geom_point()+
-   theme_minimal()
+  theme_minimal()
 
 
 
@@ -574,6 +694,8 @@ GO_out <- GO_out %>%
 write.csv(GO_out, here('GO_Mississippi_May.csv'), row.names = FALSE)
 
 ```
+
+
 ```{r}
 # read in data processed with pCO2 Sys
 
@@ -786,7 +908,7 @@ GO_Oct_EQU <- GO_Oct %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
 ggplot(GO_Oct_EQU, aes(x = date_time_gmt, y = CO2_ppm))+
   geom_point()+
   theme_minimal()
- 
+
 #TODO: clean up beginning and end of Oct 11
 
 GO_Oct_ATM <- GO_Oct %>% filter(Type == "ATM" | Type == "ATM-DRAIN")
