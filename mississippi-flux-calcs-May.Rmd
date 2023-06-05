@@ -1,0 +1,272 @@
+---
+title: "mississippi-flux-calcs"
+author: "Kate Morkeski"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#library(readr)
+library(dplyr)
+library(ggplot2)
+
+```
+
+# Read in fugacity data generated with pCO2sys
+
+```{r}
+
+may_fug <- read_csv("MAY_Working.csv")
+
+may_fug[may_fug=="-999"]<-NA
+may_fug[may_fug=="NaN"]<-NA
+
+may_fug$date_time_utc <- as.POSIXct(may_fug$date_time_utc, tz = "UTC", format="%m/%d/%Y %H:%M")
+
+# remove duplicate columns
+may_fug <- may_fug %>% 
+    select(-"YDay Calc", -"Cruise Day") %>%
+    rename(dfCO2wa = "dfCO2(w-a)")
+  
+```
+# Read in wind data
+
+```{r}
+
+# wind speed from csv generated in mississippi-data-assembly.Rmd
+GO_May_wind <- read_csv("GO_May_wind_interp.csv")
+GO_May_wind <- rename(GO_May_wind, date_time_wind = date_time_utc)
+
+# bind with GO data
+may_fug <- cbind(may_fug, GO_May_wind)
+
+may_fug$time_diff = may_fug$date_time_utc - may_fug$date_time_wind
+# difference is < 60 s due to loss of seconds in date_time_utc
+
+# remove duplicate columns
+may_fug <- may_fug %>% 
+    select(-date_time_utc) %>% 
+    rename(date_time_utc = date_time_wind)
+
+```
+# Calculate U_10
+
+```{r}
+
+# MSY elevation is 9 m
+# DSF elevation is 0 m
+
+# use wind speed to calculate U_10 based on Large and Pond (1981) as reprinted in Yu et al 2020
+may_fug$U_10_MSY = may_fug$wind_m_s_MSY / (1 + (sqrt(0.0011)/0.4) * log(9/10))
+may_fug$U_10_rig_0m = may_fug$wind_m_s_rig / (1 + (sqrt(0.0011)/0.4) * log(0/10))
+may_fug$U_10_rig_1m = may_fug$wind_m_s_rig / (1 + (sqrt(0.0011)/0.4) * log(1/10))
+may_fug$U_10_rig_10m = may_fug$wind_m_s_rig / (1 + (sqrt(0.0011)/0.4) * log(10/10))
+
+# according to data source https://mesonet.agron.iastate.edu/request/download.phtml?network=LA_ASOS, 
+# height of DSF data is 0 m. Can't calculate U_10 with height of 0 and seems unlikely anyway
+# plugging in alternate heights to calculate effect on U_10
+
+# plot wind speed
+ggplot(may_fug, aes(x = date_time_utc, y = wind_m_s_MSY, color = "MSY")) +
+  labs(x = "datetime", y = "U10") +
+  geom_point() + 
+  geom_point(data = may_fug, aes(x = date_time_utc, y = wind_m_s_rig, color = "rig")) +
+  labs(x = "datetime", y = "wind speed m/s") +
+    theme_minimal()
+
+# plot U_10
+ggplot(may_fug, aes(x = date_time_utc, y = U_10_rig_0m, color = "0m")) +
+  labs(x = "datetime", y = "U10") +
+  geom_point() + 
+  theme_minimal()
+
+# plot U_10
+ggplot(may_fug, aes(x = date_time_utc, y = U_10_rig_1m, color = "1m")) +
+  labs(x = "datetime", y = "U10") +
+  geom_point() + 
+  geom_point(data = may_fug, aes(x = date_time_utc, y = U_10_rig_10m, color = "10m")) +
+  labs(x = "datetime", y = "U10") +
+    theme_minimal()
+
+# plot U_10
+ggplot(may_fug, aes(x = date_time_utc, y = U_10_MSY, color = "MSY")) +
+  labs(x = "datetime", y = "U10") +
+  geom_point() + 
+    theme_minimal()
+
+```
+
+
+# Add gas transfer velocity, solubility, and flux
+
+```{r}
+
+temp_C = may_fug$temperature
+sal = may_fug$CTDSAL_PSS78
+
+# as check: calculate #Schmidt number for seawater (35 ppt) at 20 C
+Sc = 2116.8 + (-136.25*20) + (4.7353*20^2) + (-0.092307*20^3) + (0.0007555*20^4)
+# Schmidt number for freshwater
+Sc_fresh = 1923.6 + (-125.06*20) + (4.3773*20^2) + (-0.085681*20^3) + (0.00070284*20^4)
+
+# calculate seawater Schmidt number at measured temp
+may_fug$Sc_35ppt = 2116.8 + (-136.25*temp_C) + (4.7353*temp_C^2) + (-0.092307*temp_C^3) + (0.0007555*temp_C^4)
+# calculate freshwater  Schmidt number at measured temp
+may_fug$Sc_fresh = 1923.6 + (-125.06*temp_C) + (4.3773*temp_C^2) + (-0.085681*temp_C^3) + (0.00070284*temp_C^4)
+
+# calculate gas transfer velocity, k, in cm per hr
+# use U_10 only from MSY for now
+may_fug$k_cm_hr_35ppt = 0.251*may_fug$U_10_MSY*((may_fug$Sc_35ppt/660)^-0.5)
+may_fug$k_cm_hr_fresh = 0.251*may_fug$U_10_MSY*((may_fug$Sc_fresh/660)^-0.5)
+
+hist(may_fug$k_cm_hr_35ppt)
+hist(may_fug$k_cm_hr_fresh)
+
+# coefficents for Henry's law coefficient for CO2 from Weiss 1974 as reported in Emerson & Hedges with units mol kg-1 atm-1
+A1 = -60.2409 
+A2 = 93.4517 
+A3 = 23.3585 
+B1 = 0.023517 
+B2 = -0.023656 
+B3 = 0.0047035 
+
+# calculate Henry's law coefficient
+may_fug$Kh_mol_kg = exp(A1+A2*(100/(273.15+temp_C)) + A3*log((273.15+temp_C)/100) +sal*(B1+B2*((273.15+temp_C)/100)+B3*((273.15+temp_C)/100)^2))
+
+hist(may_fug$Kh_mol_kg)
+
+# check to make sure Kh is calculated correctly. Should be 0.0324
+#Kh = exp(A1+A2*(100/(273.15+20)) + A3*log((273.15+20)/100) +35*(B1+B2*((273.15+20)/100)+B3*((273.15+20)/100)^2))
+
+# R syntax for natural log and e
+#exp(0.5) # e^(1/2)
+#log(1)  # natural logarithm
+
+# calculate Flux
+may_fug$F_mM_m2_d_35ppt <- may_fug$k_cm_hr_35ppt * may_fug$Kh_mol_kg * may_fug$dfCO2wa* 24 * 1 *0.01
+may_fug$F_mM_m2_d_fresh <- may_fug$k_cm_hr_fresh * may_fug$Kh_mol_kg * may_fug$dfCO2wa* 24 * 1 *0.01
+may_fug$F_diff <- may_fug$F_mM_m2_d_35ppt - may_fug$F_mM_m2_d_fresh
+hist(may_fug$F_mM_m2_d_35ppt)
+hist(may_fug$F_mM_m2_d_fresh)
+hist(may_fug$F_diff)
+
+
+# rename for plotting
+may_fug <- may_fug %>% 
+      rename(xCO2_dry = "xCO2 dry")
+
+
+```
+# Plot by date time
+
+```{r}
+
+ggplot(may_fug, aes(x = date_time_utc, y = temperature)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "Temperature", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = date_time_utc, y = CTDSAL_PSS78)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "Salinity CTD", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = date_time_utc, y = Patm)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "Atmospheric pressure mbar", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = date_time_utc, y = xCO2_dry)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "XCO2_dry", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = date_time_utc, y = dfCO2wa)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "dfCO2", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = date_time_utc, y = F_mM_m2_d_35ppt)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "F_mM_m2_d", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = date_time_utc, y = F_mM_m2_d_35ppt, color = "Type")) +
+  geom_point() +
+  labs(x = "Date Time UTC", y = "F_mM_m2_d") +
+  theme_minimal()
+
+```
+# Plot by latitude
+
+```{r}
+
+ggplot(may_fug, aes(x = lat, y = temperature)) +
+  geom_point() +
+  labs(x = "Latitude", y = "Temperature", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = lat, y = CTDSAL_PSS78)) +
+  geom_point() +
+  labs(x = "Latitude", y = "Salinity CTD", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = lat, y = Patm)) +
+  geom_point() +
+  labs(x = "Latitude", y = "Atmospheric pressure mbar", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = lat, y = xCO2_dry)) +
+  geom_point() +
+  labs(x = "Latitude", y = "XCO2_dry", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = lat, y = dfCO2wa)) +
+  geom_point() +
+  labs(x = "Latitude", y = "dfCO2", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = lat, y = F_mM_m2_d_35ppt)) +
+  geom_point() +
+  labs(x = "Latitude", y = "F_mM_m2_d", color = "") +
+  theme_minimal()
+
+```
+# Plot by salinity
+```{r}
+
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = temperature)) +
+  geom_point() +
+  labs(x = "Salinity CTD", y = "Temperature", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = Patm)) +
+  geom_point() +
+  labs(x = "Salinity CTD", y = "Atmospheric pressure mbar", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = xCO2_dry)) +
+  geom_point() +
+  labs(x = "Salinity CTD", y = "XCO2_dry", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = dfCO2wa)) +
+  geom_point() +
+  labs(x = "Salinity CTD", y = "dfCO2", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = F_mM_m2_d_35ppt)) +
+  geom_point() +
+  labs(x = "Salinity CTD", y = "F_mM_m2_d", color = "") +
+  theme_minimal()
+
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = F_mM_m2_d_35ppt, color = "Type")) +
+  geom_point() +
+  labs(x = "salinity", y = "F_mM_m2_d") +
+  theme_minimal()
+
+```
+
+
