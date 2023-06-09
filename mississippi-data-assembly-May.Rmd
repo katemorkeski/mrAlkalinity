@@ -202,7 +202,7 @@ ctd_check <- GOplus %>%
 
 ```{r}
 
-#Based on GO log sheets, river data begin after 2022-05-10 16:37:37, which is 1652200657 in numeric format
+#Based on GO log sheets, river data begin after 11:35 local time, 2022-05-10 16:37:37 UTC, which is 1652200657 in numeric format
 GOplus$date_time_num <- as.numeric(GOplus$date_time_utc)
 
 GOplus <- GOplus %>%
@@ -250,7 +250,7 @@ rig_met <- read.csv("MSR_Met_Data.csv")
 
 MSY_met <- rename(MSY_met, datetime = valid)
 
-# set time zone to GMT 
+# set time zone 
 MSY_met$datetime <- strptime(MSY_met$datetime,"%m/%d/%Y %R")
 rig_met$datetime <- strptime(rig_met$datetime,"%m/%d/%Y %R")
 tz(MSY_met$datetime) <- "America/New_York"

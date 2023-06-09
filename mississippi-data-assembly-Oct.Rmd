@@ -19,9 +19,9 @@ library(stats)
 # Read in CTD and bottle data
 
 ```{r}
-#TODO: change to Oct
-#compiled <- read_excel(here('MSR_1_Compiled.xlsx')) 
-#salinity <- read_excel(here('MSR_1_Salinity.xlsx'))
+
+compiled <- read_excel(here('MSR_2_Compiled.xlsx')) 
+
 ```
 
 # Format date and time
@@ -36,10 +36,11 @@ compiled <- compiled %>%
   rename(lat = "Latitude [decimal degrees]") %>%
   rename(long = "Longitude [decimal degrees]") %>%
   rename(temperature = "CTD_Potential_Temp [deg_C]") %>%
-  rename(depth_m = "Depth [m]")
+  rename(depth_m = "Depth [m]") %>%
+  mutate(long = long*-1)
 
 # combine date and time
-compiled$Date <- as.character(compiled$Date) 
+compiled$Date <- as.Date(compiled$Date, format = "%B %d %Y") 
 compiled$time_utc <- as.character(compiled$time_utc)
 compiled$time_utc <- gsub("1899-12-31 ", "", compiled$time_utc)
 compiled$date_time_utc <- paste(compiled$Date, compiled$time_utc)
@@ -63,6 +64,10 @@ mouth <- louisiana %>% filter(long > -91.5 & lat < 30.5)
 
 mapping <- compiled %>% 
   select(date_time_utc, station, cast, niskin, lat, long, temperature, depth_m, CTDSAL_PSS78) 
+
+ggplot(mapping, aes(x = long, y = lat)) +
+  geom_point() +
+  theme_minimal()
 
 ggplot(louisiana, aes(x = long, y = lat)) +
   geom_path() +
@@ -102,28 +107,51 @@ ggplot(mouth, aes(x = long, y = lat)) +
 
 ```{r}
 
-#TODO: update to Oct
 # read in GO data
-#GOfiles <- dir(here("MSR_GO_data_May/"), "*.txt") # get file names
+GOfiles <- dir(here("MSR_GO_data_Oct/"), "*.txt") # get file names
 
-#GO_May <- GOfiles %>% map_dfr(~ read_tsv(here("MSR_GO_data_May/", .), show_col_types = FALSE, ))
+GO_Oct <- GOfiles %>% map_dfr(~ read_tsv(here("MSR_GO_data_Oct/", .), show_col_types = FALSE, ))
 
 ```
 
 ```{r}
 
 # handle date and time columns
-GO_May <- rename(GO_May, PC_Date = "PC Date")
-GO_May <- rename(GO_May, PC_Time = "PC Time")
+GO_Oct <- rename(GO_Oct, PC_Date = "PC Date")
+GO_Oct <- rename(GO_Oct, PC_Time = "PC Time")
 
 # combine date and time
-GO_May$PC_Date <- as.character(GO_May$PC_Date) 
-GO_May$PC_Time <- as.character(GO_May$PC_Time) 
-GO_May$date_time_utc <- paste(GO_May$PC_Date, GO_May$PC_Time)
-GO_May$date_time_utc <- as.POSIXct(GO_May$date_time_utc, tz = "UTC", format="%d/%m/%y %H:%M:%OS")
+GO_Oct$PC_Date <- as.character(GO_Oct$PC_Date) 
+GO_Oct$PC_Time <- as.character(GO_Oct$PC_Time) 
+GO_Oct$date_time_local <- paste(GO_Oct$PC_Date, GO_Oct$PC_Time)
+GO_Oct$date_time_local <- as.POSIXct(GO_Oct$date_time_local, tz = "America/Chicago", format="%d/%m/%y %H:%M:%OS")
+GO_Oct$date_time_utc <- with_tz(GO_Oct$date_time_local, "UTC")
+
+ggplot(GO_Oct, aes(x = date_time_local, y = "equ press")) +
+  geom_point() +
+  theme_minimal()
+
+ggplot(GO_Oct, aes(x = date_time_utc, y = "equ press")) +
+  geom_point() +
+  theme_minimal()
 
 ```
+# Identify surface stations
 
+```{r}
+
+# identify surface rows
+mapping <-mapping %>% 
+  mutate(surface = case_when(station < 16 & depth_m < 1 ~ "Y",
+                             station > 15 & depth_m < 2 ~ "Y",
+                             TRUE ~ "N"
+  )) 
+
+surface_bottles <-mapping %>% filter(surface == "Y")
+
+surface_bottles <- surface_bottles %>% select(-surface)
+
+```
 # Match bottle data by time
 
 ```{r}
@@ -133,7 +161,7 @@ GO_May$date_time_utc <- as.POSIXct(GO_May$date_time_utc, tz = "UTC", format="%d/
 
 for (i in 1:nrow(surface_bottles)) {
   
-  surface_bottles$GO_row[i] <- which.min(abs(GO_May$date_time_utc - surface_bottles$date_time_utc[i]))
+  surface_bottles$GO_row[i] <- which.min(abs(GO_Oct$date_time_utc - surface_bottles$date_time_utc[i]))
   
 }
 
@@ -151,33 +179,42 @@ surface_avgs <- surface_bottles %>%
 # round GO_row to integer
 surface_avgs$GO_row <- round(surface_avgs$GO_row, 0)
 
-GO_May$GO_row <- seq.int(nrow(GO_May))
+GO_Oct$GO_row <- seq.int(nrow(GO_Oct))
 
-GOplus <- left_join(GO_May, surface_avgs, by = "GO_row")
+GOplus <- left_join(GO_Oct, surface_avgs, by = "GO_row")
 
 # check which bottle rows are used
 ctd_check <- GOplus %>% 
   filter(!is.na(station))
 
+GOplus <- GOplus %>%
+  select(-GO_row, -station, -cast, -depth_m)
+
 ```
+# Interpolate CTD data to GO timestamps
+
+```{r}
+
+# # interpolate atmospheric pressure to GO data time stamps
+# GO_Patm <- data.frame(approx(Oct_Patm$datetime, Oct_Patm$Patm_mbar_avg, xout = GO_out$date_time_utc, rule = 2, method = "linear"))
+# GO_out <- cbind(GO_out, GO_Patm)
+# GO_out <- GO_out %>% rename(Patm_mbar = y) %>% select(-x) %>% mutate(Patm_atm = Patm_mbar/1013.25)
+
+```
+
 
 # format GO data
 
 ```{r}
 
-GO_out <- GO_out %>% 
-  filter(Type != "SHUT DOWN") 
-
-may_fug[may_fug=="-999"]<-NA
-may_fug[may_fug=="NaN"]<-NA
+GO_out <- GOplus %>% 
+  filter(Type != "SHUT DOWN" ) 
 
 ```
 
 # Read in met data
 
 ```{r}
-
-GO_out <- read_csv('GO_Mississippi_May.csv')
 
 #https://mesonet.agron.iastate.edu/request/download.phtml?network=LA_ASOS
 # one site is MSY airport and the other Is a rig/platform south of the estuary (named DSF). 
@@ -187,11 +224,13 @@ rig_met <- read.csv("MSR_Met_Data.csv")
 
 MSY_met <- rename(MSY_met, datetime = valid)
 
-# set time zone to GMT 
+# set time zone 
 MSY_met$datetime <- strptime(MSY_met$datetime,"%m/%d/%Y %R")
 rig_met$datetime <- strptime(rig_met$datetime,"%m/%d/%Y %R")
-tz(MSY_met$datetime) <- "America/New_York"
-tz(rig_met$datetime) <- "America/New_York"
+#tz(MSY_met$datetime) <- "America/Chicago"
+#tz(rig_met$datetime) <- "America/Chicago"
+tz(MSY_met$datetime) <- "UTC"
+tz(rig_met$datetime) <- "UTC"
 
 rig_met$alti <- as.numeric(rig_met$alti)
 MSY_met$mslp <- as.numeric(MSY_met$mslp)
@@ -257,6 +296,14 @@ ggplot(Oct_MSY_met, aes(x = datetime, y = mslp, color = "MSY")) +
   theme_minimal()
 # mslp and equ pressure
 scale = 1
+# local time
+ggplot(Oct_MSY_met, aes(x = datetime, y = mslp, color = "MSY")) +
+  geom_point() +
+  geom_point(data = GO_out, aes(x = date_time_local, y = equ_calc, color = "equ")) +
+  scale_y_continuous(limits = c(1012, 1024), sec.axis = sec_axis(~.*scale, name="mslp")) +
+  theme_minimal()
+
+# utc
 ggplot(Oct_MSY_met, aes(x = datetime, y = mslp, color = "MSY")) +
   geom_point() +
   geom_point(data = GO_out, aes(x = date_time_utc, y = equ_calc, color = "equ")) +
@@ -277,15 +324,15 @@ ggplot(mouth, aes(x = long, y = lat)) +
 
 # multiply alti by 33.8639 to convert from inches Hg to mbar
 Oct_MSY_met <- Oct_MSY_met %>%
-  mutate(Patm = alti*33.8639)
+  mutate(Patm_mbar = alti*33.8639)
 
 Oct_rig_met <- Oct_rig_met %>%
-  mutate(Patm = alti*33.8639)
+  mutate(Patm_mbar = alti*33.8639)
 
 # plot pressure data 
-ggplot(Oct_MSY_met, aes(x = datetime, y = Patm, color = "MSY")) +
+ggplot(Oct_MSY_met, aes(x = datetime, y = Patm_mbar, color = "MSY")) +
   geom_point() + 
-  geom_point(data = Oct_rig_met, aes(x = datetime, y = Patm, color = "rig")) + 
+  geom_point(data = Oct_rig_met, aes(x = datetime, y = Patm_mbar, color = "rig")) + 
   theme_minimal()
 
 ```
@@ -295,27 +342,27 @@ ggplot(Oct_MSY_met, aes(x = datetime, y = Patm, color = "MSY")) +
 ```{r}
 
 # Oct
-Oct_MSY_Patm <- data.frame(approx(Oct_MSY_met$datetime, Oct_MSY_met$Patm, xout = Oct_rig_met$datetime, rule = 2, method = "linear"))
+Oct_MSY_Patm <- data.frame(approx(Oct_MSY_met$datetime, Oct_MSY_met$Patm_mbar, xout = Oct_rig_met$datetime, rule = 2, method = "linear"))
 
-Oct_rig_Patm <- Oct_rig_met %>% select(datetime, Patm)
+Oct_rig_Patm <- Oct_rig_met %>% select(datetime, Patm_mbar)
 
 Oct_Patm <- cbind(Oct_MSY_Patm, Oct_rig_Patm)
 Oct_Patm <- Oct_Patm %>% 
-  rename(Patm_MSY = y) %>% 
-  rename(Patm_rig = Patm) 
+  rename(Patm_mbar_MSY = y) %>% 
+  rename(Patm_mbar_rig = Patm_mbar) 
 
 Oct_Patm <- Oct_Patm %>%
-  mutate(Patm_avg = (Patm_MSY + Patm_rig)/2)
+  mutate(Patm_mbar_avg = (Patm_mbar_MSY + Patm_mbar_rig)/2)
 
-ggplot(Oct_Patm, aes(x = datetime, y = Patm_MSY, color = "MSY")) +
+ggplot(Oct_Patm, aes(x = datetime, y = Patm_mbar_MSY, color = "MSY")) +
   geom_point() + 
-  geom_point(data = Oct_Patm, aes(x = datetime, y = Patm_rig, color = "rig")) + 
-  geom_point(data = Oct_Patm, aes(x = datetime, y = Patm_avg, color = "avg")) + 
+  geom_point(data = Oct_Patm, aes(x = datetime, y = Patm_mbar_rig, color = "rig")) + 
+  geom_point(data = Oct_Patm, aes(x = datetime, y = Patm_mbar_avg, color = "avg")) + 
   theme_minimal()
 
-ggplot(Oct_MSY_met, aes(x = datetime, y = Patm, color = "MSY")) +
+ggplot(Oct_MSY_met, aes(x = datetime, y = Patm_mbar, color = "MSY")) +
   geom_point() + 
-  geom_point(data = Oct_rig_met, aes(x = datetime, y = Patm, color = "rig")) + 
+  geom_point(data = Oct_rig_met, aes(x = datetime, y = Patm_mbar, color = "rig")) + 
   theme_minimal()
 
 ```
@@ -323,24 +370,76 @@ ggplot(Oct_MSY_met, aes(x = datetime, y = Patm, color = "MSY")) +
 ```{r}
 
 # interpolate atmospheric pressure to GO data time stamps
+GO_Patm <- data.frame(approx(Oct_Patm$datetime, Oct_Patm$Patm_mbar_avg, xout = GO_out$date_time_utc, rule = 2, method = "linear"))
+GO_out <- cbind(GO_out, GO_Patm)
+GO_out <- GO_out %>% rename(Patm_mbar = y) %>% select(-x) %>% mutate(Patm_atm = Patm_mbar/1013.25)
 
-GO <- read.csv("MAY_lat_long_temp_sal_Tin_air_Working.csv")
-GO$date_time_utc <- as.POSIXct(GO$date_time_utc, format= "%Y-%m-%d %H:%M:%S")
+# interpolate wind data to GO time series
+# use only MSY because don't have real height of DSF sensor
+GO_wind <- data.frame(approx(Oct_MSY_met$datetime, Oct_MSY_met$speed_mph, xout = GO_out$date_time_utc, rule = 2, method = "linear"))
+GO_out <- cbind(GO_out, GO_wind)
+GO_out <- GO_out %>% rename(speed_mph_MSY = y) %>% select(-x) %>% mutate(speed_m_s_MSY = speed_mph_MSY*0.44704)
 
-GO_Patm <- data.frame(approx(May_Patm$datetime, May_Patm$Patm_avg, xout = GO$date_time_utc, rule = 2, method = "linear"))
+# MSY temperature and dewpoint data have better resolution than DSF, so use only MSY 
+# interpolate wind data to GO time series
+GO_temp <- data.frame(approx(Oct_MSY_met$datetime, Oct_MSY_met$tmpc, xout = GO_out$date_time_utc, rule = 2, method = "linear"))
+GO_out <- cbind(GO_out, GO_temp)
+GO_out <- GO_out %>% rename(temp_air_C = y) %>% select(-x)
+GO_dwpc <- data.frame(approx(Oct_MSY_met$datetime, Oct_MSY_met$dwpc, xout = GO_out$date_time_utc, rule = 2, method = "linear"))
+GO_out <- cbind(GO_out, GO_dwpc)
+GO_out <- GO_out %>% rename(dewpoint_C = y) %>% select(-x)
+# calculate vapor pressure: https://www.weather.gov/media/epz/wxcalc/vaporPressure.pdf
+GO_out <- GO_out %>%
+  mutate(pWater_mbar = 6.11*10^((7.5*dewpoint_C)/(237.3+dewpoint_C))) %>%
+  mutate(pWater_atm = pWater_mbar/1013.25)         
 
-GO <- cbind(GO, GO_Patm)
+```
 
-ggplot(GO, aes(x = x, y = y, color = "Patm")) +
+# plot met data
+
+```{r}
+
+ggplot(Oct_MSY_met, aes(x = datetime, y = tmpc, color = "MSY")) +
   geom_point() + 
-  geom_point(data = GO, aes(x = date_time_utc, y = licor.press, color = "Plicor")) + 
+  geom_point(data = Oct_rig_met, aes(x = datetime, y = tmpc, color = "rig")) + 
   theme_minimal()
 
-GO <- GO %>% 
-  select(-x) %>%
-  rename(Patm = y)  
+ggplot(Oct_MSY_met, aes(x = datetime, y = dwpc, color = "MSY")) +
+  geom_point() + 
+  geom_point(data = Oct_rig_met, aes(x = datetime, y = dwpc, color = "rig")) + 
+  theme_minimal()
 
-#write.csv(GO, here('MAY_lat_long_temp_sal_Tin_air_Working_Patm.csv'), row.names = FALSE)
+ggplot(GO_out, aes(x = date_time_utc, y = speed_m_s_MSY)) +
+  geom_point() + 
+  labs(x = "datetime", y = "wind speed m/s") +
+  theme_minimal()
+
+ggplot(GO_out, aes(x = date_time_utc, y = temp_air_C, color = "air temperature")) +
+  geom_point() + 
+  geom_point(data = GO_out, aes(x = date_time_utc, y = dewpoint_C, color = "dewpoint")) + 
+  labs(x = "datetime", y = "Temperature C") +
+  theme_minimal()
+
+ggplot(GO_out, aes(x = date_time_utc, y = Patm_atm, color = "P total")) +
+  geom_point() + 
+  labs(x = "datetime", y = "Pressure (atm)") +
+  theme_minimal()
+
+ggplot(GO_out, aes(x = date_time_utc, y = pWater_atm, color = "P H20")) +
+  geom_point() + 
+  labs(x = "datetime", y = "Pressure (atm)") +
+  theme_minimal()
+
+```
+
+# Write file for input into pCO2sys
+
+```{r}
+
+GO_out <- GO_out %>% 
+  select(-speed_mph_MSY, -dewpoint_C)
+
+write.csv(GO_out, here('Oct_GO_CTD_met.csv'), row.names = FALSE)
 
 ```
 
@@ -370,7 +469,7 @@ POceanus <- POceanus %>% relocate(date_time, .before = "Zero.A.D")
 POceanus$date_time <- gsub(" ", "", POceanus$date_time)
 POceanus$date_time <- gsub("x", " ", POceanus$date_time)
 
-POceanus$date_time <- as.POSIXct(POceanus$date_time, tz = "GMT", format="%Y-%m-%d %H:%M:%OS")
+POceanus$date_time <- as.POSIXct(POceanus$date_time, tz = "America/Chicago", format="%Y-%m-%d %H:%M:%OS")
 
 POceanus$CO2 <- as.double(POceanus$CO2)
 POceanus$Humidity <- as.double(POceanus$Humidity)
@@ -473,36 +572,77 @@ ggplot(POceanus_under4k, aes(x = date_time_gmt, y = CO2_ppm))+
   geom_point()+
   theme_minimal()
 
-
-#TODO: clean up long equilibration period after 2022-10-11 19:29:13
-
 ```
-# read in October GO data
+
+#clean up long equilibration period after 2022-10-11 19:29:13
 
 ```{r}
-# read in October GO files
-GOfiles <- dir(here("MSR_GO_data_Oct/"), "*.txt") # get file names
 
-GO_Oct <- GOfiles %>% map_dfr(~ read_tsv(here("MSR_GO_data_Oct/", .), show_col_types = FALSE, ))
+POceanus_under4k$date_time_num <- as.numeric(POceanus_under4k$date_time_gmt)
 
-# handle date and time columns
-GO_Oct <- rename(GO_Oct, PC_Date = "PC Date")
-GO_Oct <- rename(GO_Oct, PC_Time = "PC Time")
+POceanus_junk <- POceanus_under4k %>% filter(Day == 11 & Hour == "19" & Minute == "28")
+start_junk <- POceanus_junk$date_time_num[1]
 
-# combine date and time
-GO_Oct$PC_Date <- as.character(GO_Oct$PC_Date) 
-GO_Oct$PC_Time <- as.character(GO_Oct$PC_Time) 
-GO_Oct$date_time_gmt <- paste(GO_Oct$PC_Date, GO_Oct$PC_Time)
-GO_Oct$date_time_gmt <- as.POSIXct(GO_Oct$date_time_gmt, tz = "GMT", format="%d/%m/%y %H:%M:%OS")
+POceanus_junk <- POceanus_under4k %>% filter(Day == 11 & Hour == "19" & Minute == "50")
+end_junk <- POceanus_junk$date_time_num[1]
 
-GO_Oct <- rename(GO_Oct, CO2_ppm = "CO2 um/m")
+POceanus_under4k <- POceanus_under4k %>%
+  mutate(leg = case_when(start_junk < date_time_num & date_time_num < end_junk ~ "junk"))
+
+POceanus_junk <- POceanus_under4k %>% filter(Day == 11 & Hour == "13" & Minute == "52")
+end_canal <- POceanus_junk$date_time_num[1]
+
+POceanus_junk <- POceanus_under4k %>% filter(Day == 11 & Hour == "22" & Minute == "00")
+start_night <- POceanus_junk$date_time_num[1]
+POceanus_junk <- POceanus_under4k %>% filter(Day == 12 & Hour == "07" & Minute == "30")
+end_night <- POceanus_junk$date_time_num[1]
+
+POceanus_night <- POceanus_under4k %>% filter(start_night < date_time_num & date_time_num < end_night)
+end_night - start_night
+
+POceanus_under4k <- POceanus_under4k %>%
+  mutate(leg = case_when(start_junk < date_time_num & date_time_num < end_junk ~ "junk",
+                         date_time_num < end_canal ~ "junk",
+                         start_night < date_time_num & date_time_num < end_night ~ "junk"))
+
+ggplot(POceanus_under4k, aes(x = date_time_gmt, y = CO2_ppm, color = leg))+
+  geom_point()+
+  theme_minimal()
+
+POceanus_clean <- POceanus_under4k %>% filter(is.na(leg))
+
+POceanus_clean <- POceanus_clean %>% select(-date_time_num, -leg)
+
+ggplot(POceanus_clean, aes(x = date_time_gmt, y = CO2_ppm))+
+  geom_point()+
+  theme_minimal()
+
+POceanus_clean <- POceanus_clean %>% 
+  rename(date_time_local = date_time_gmt) 
 
 ```
+
+# 
+
+```{r}
+
+
+GO_out <- GO_out %>% rename(CO2_ppm = "CO2 um/m")
+
+
+```
+
 # Plot raw GO data
 
 ```{r}
 
-ggplot(GO_Oct, aes(x = date_time_gmt, y = CO2_ppm))+
+ggplot(GO_out, aes(x = date_time_local, y = CO2_ppm, color = "GO"))+
+  geom_point()+
+  geom_point(data = POceanus_clean, aes(x = date_time_local, y = CO2_ppm, color = "Pro Oceanus")) + 
+  labs(x = "datetime", y = "CO2 ppm") +
+  theme_minimal()
+
+ggplot(GO_out, aes(x = date_time_utc, y = CO2_ppm, color = "Type"))+
   geom_point()+
   theme_minimal()
 
@@ -510,13 +650,36 @@ ggplot(GO_Oct, aes(x = date_time_gmt, y = CO2_ppm))+
 
 ```{r}
 
-GO_Oct_EQU <- GO_Oct %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
+GO_Oct_EQU <- GO_out %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
 
-ggplot(GO_Oct_EQU, aes(x = date_time_gmt, y = CO2_ppm))+
+ggplot(GO_Oct_EQU, aes(x = date_time_utc, y = CO2_ppm))+
   geom_point()+
   theme_minimal()
 
-#TODO: clean up beginning and end of Oct 11
+# clean up beginning and end of Oct 11
+GO_junk <- GO_out %>% filter(date_time_local < "2022-10-11 14:47:27")
+GO_junk <- GO_out %>% filter(Type == "EQU" & date_time_utc < "2022-10-11 14:47:27")
+GO_out <- GO_out %>%
+  mutate(leg = case_when(Type == "EQU" & date_time_utc < "2022-10-11 14:47:27" ~ "junk",
+                         Type == "EQU-DRAIN" & date_time_utc < "2022-10-11 14:47:27" ~ "junk",
+                         Type =="EQU" & date_time_utc > "2022-10-11 23:00:00" & date_time_utc < "2022-10-12 01:00:00" ~ "junk",
+                         Type =="EQU-DRAIN" & date_time_utc > "2022-10-11 23:00:00" & date_time_utc < "2022-10-12 01:00:00" ~ "junk"))
+
+ggplot(GO_out, aes(x = date_time_utc, y = CO2_ppm, color = leg))+
+  geom_point()+
+  theme_minimal()
+
+GO_clean <- GO_out %>% filter(is.na(leg))
+
+GO_Oct_EQU <- GO_clean %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
+
+ggplot(GO_Oct_EQU, aes(x = date_time_utc, y = CO2_ppm))+
+  geom_point()+
+  theme_minimal()
+
+```
+
+```{r}
 
 GO_Oct_ATM <- GO_Oct %>% filter(Type == "ATM" | Type == "ATM-DRAIN")
 
@@ -535,8 +698,9 @@ ggplot(GO_Oct_STD, aes(x = date_time_gmt, y = CO2_ppm))+
 
 ```{r}
 
+ggplot(GO_Oct_EQU, aes(x= date_time_local, y = CO2_ppm, color = "General Oceanics"))+ geom_point() +geom_point(data = POceanus_clean, aes(color = "Pro Oceanus"))
 
-ggplot(GO_Oct_EQU, aes(x= date_time_gmt, y = CO2_ppm, color = "General Oceanics"))+ geom_point() +geom_point(data = POceanus_under4k, aes(color = "Pro Oceanus"))
+write.csv(POceanus_clean, here('Pro_Oceanus_pCO2_Mississippi_Oct_2022.csv'), row.names = FALSE)
 
 ```
 # Read in GPS data
@@ -549,119 +713,101 @@ gps_oct$dist_km <- gps_oct$Distancem/1000
 
 gps_oct <- gps_oct %>% relocate(dist_km, .after = "Distancem")
 
+tz(gps_oct$DateLocal) <- "America/Chicago"
+tz(gps_oct$DateGMT) <- "UTC"
+
 ```
 
+```{r}
+
+ggplot(mouth, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_point(data = mapping, aes(x = long, y = lat)) +  
+  theme_minimal()
+
+ggplot(mouth, aes(x = long, y = lat)) +
+  geom_path() +
+  geom_point(data = gps_oct, aes(x = Longitude, y = Latitude)) +  
+  theme_minimal()
+
+ggplot(GO_out, aes(x = date_time_local, y = lat)) +
+  geom_point() +
+  geom_point(data = gps_oct, aes(x = DateLocal, y = Latitude)) +  
+  theme_minimal()
+
+ggplot(GO_out, aes(x = date_time_local, y = lat, color = "GO")) +
+  geom_point() +
+  geom_point(data = gps_oct, aes(x = DateGMT, y = Latitude, color = "GPS")) +  
+  theme_minimal()
+
+
+```
 
 
 ```{r}
 # match gps data to GO data based on datetime
 
-for (i in 1:nrow(GO_Oct_EQU)) {
+for (i in 1:nrow(GO_out)) {
   
-  GO_Oct_EQU$ind[i] <- which.min(abs(GO_Oct_EQU$date_time_gmt[i] - gps_oct$DateGMT))
+  GO_out$ind[i] <- which.min(abs(GO_out$date_time_local[i] - gps_oct$DateGMT))
   
 }
 
 gps_oct$row_num <- seq.int(nrow(gps_oct))
 gps_oct$bottlerow <- as.character(gps_oct$row_num)
-GO_Oct_EQU$bottlerow <- as.character(GO_Oct_EQU$ind)
+GO_out$bottlerow <- as.character(GO_out$ind)
 
-GO_Oct_EQU_gps <- left_join(GO_Oct_EQU, gps_oct, by = "bottlerow")
+GO_out <- left_join(GO_out, gps_oct, by = "bottlerow")
 
-# mapping$row_num <- seq.int(nrow(mapping))
-# mapping$bottlerow <- as.character(mapping$row_num)
-# GO_May$bottlerow <- as.character(GO_May$ind)
-# 
-# GOplus <- left_join(GO_May, mapping, by = "bottlerow")
+GO_out <- GO_out %>% 
+  select(-HorizontalAccuracym, -Altitudem, -VerticalAccuracym, -Distancem, -AverageSpeedms, -Coursedeg, -TrueHeadingdeg, -MagneticHeadingdeg, -HeadingAccuracydeg, -GlideRatio, -HeartRatebpm, -VarName6, -CTDMDY, -CTDHMS, -CTDTELAPS, -row_num) 
+
+GO_out <- GO_out %>% 
+  select(-lat, -long, -equ_calc, -bottlerow, -DateLocal, -DateGMT, -Timesec, -CTDCOND, -CTDPRS, -CTDDENS)
+
+GO_out <- GO_out %>% 
+  filter(is.na(leg))
+
+GO_out <- GO_out %>% 
+  select(-leg, -ind)
 
 ```
 
 ```{r}
 
-ggplot(GO_Oct_EQU_gps, aes(x = Latitude, y = CO2_ppm))+
+# compare T and S in GPS data to station data
+
+ggplot(GO_out, aes(x = date_time_local, y = CTDSAL_PSS78, color = "station sal"))+
   geom_point()+
+  geom_point(aes(x = date_time_local, y = CTDSAL, color = "interp sal")) + 
+  labs(x = "datetime", y = "salinity") +
   theme_minimal()
 
-ggplot(GO_Oct_EQU_gps, aes(x = dist_km, y = CO2_ppm))+
+ggplot(GO_out, aes(x = date_time_local, y = temperature, color = "station temp"))+
   geom_point()+
+  geom_point(aes(x = date_time_local, y = CTDTMP, color = "interp temp")) + 
+  labs(x = "datetime", y = "temperature C") +
   theme_minimal()
 
+# underway temperature and salinity from GPS data set appear to be no good
+GO_out <- GO_out %>% 
+  select(-CTDTMP, -CTDSAL)
+         
 ```
+
+# write file for pCO2sys
 
 ```{r}
 
-#TODO update to October GO data
+GO_out <- GO_out %>% 
+  mutate(temperature = case_when(is.na(temperature) ~ -999, TRUE ~ temperature)) %>% 
+  mutate(CTDSAL_PSS78 = case_when(is.na(CTDSAL_PSS78) ~ -999, TRUE ~ CTDSAL_PSS78) )
 
-# interpolate atmospheric pressure to GO data time stamps
-
-# GO <- read.csv("MAY_lat_long_temp_sal_Tin_air_Working.csv")
-# GO$date_time_utc <- as.POSIXct(GO$date_time_utc, format= "%Y-%m-%d %H:%M:%S")
-# 
-# GO_Patm <- data.frame(approx(May_Patm$datetime, May_Patm$Patm_avg, xout = GO$date_time_utc, rule = 2, method = "linear"))
-# 
-# GO <- cbind(GO, GO_Patm)
-# 
-# ggplot(GO, aes(x = x, y = y, color = "Patm")) +
-#   geom_point() + 
-#   geom_point(data = GO, aes(x = date_time_utc, y = licor.press, color = "Plicor")) + 
-#   theme_minimal()
-# 
-# GO <- GO %>% 
-#   select(-x) %>%
-#   rename(Patm = y)  
-
-#write.csv(GO, here('MAY_lat_long_temp_sal_Tin_air_Working_Patm.csv'), row.names = FALSE)
+write.csv(GO_out, here('GO_Mississippi_Oct.csv'), row.names = FALSE)
 
 ```
-# Convert wind speed units and interpolate wind speed
-
-```{r}
 
 
-# Oct
-Oct_MSY_wind <- data.frame(approx(Oct_MSY_met$datetime, Oct_MSY_met$speed_mph, xout = Oct_rig_met$datetime, rule = 2, method = "linear"))
-
-Oct_rig_wind <- Oct_rig_met %>% select(datetime, speed_mph)
-
-Oct_wind <- cbind(Oct_MSY_wind, Oct_rig_wind)
-Oct_wind <- Oct_wind %>% 
-  rename(speed_mph_MSY = y) %>% 
-  rename(speed_mph_rig = speed_mph) 
-
-Oct_wind <- Oct_wind %>%
-  mutate(wind_avg_mph = (speed_mph_MSY + speed_mph_rig)/2)
-
-# convert mph to m/s
-Oct_wind$wind_avg_m_s <- Oct_wind$wind_avg_mph*0.44704
-
-# interpolate to GO timestamps
-GO_Oct_wind <- data.frame(approx(Oct_wind$datetime, Oct_wind$wind_avg_m_s, xout = GO_Oct$date_time_utc, rule = 2, method = "linear"))
-
-GO_Oct_wind <- GO_Oct_wind %>%
-  rename(date_time_utc = x) %>%
-  rename(wind_avg_m_s = y)
-
-# output csv
-write.csv(GO_Oct_wind, "GO_Oct_wind.csv", row.names = FALSE)
-
-# plot
-ggplot(Oct_wind, aes(x = datetime, y = speed_mph_MSY, color = "MSY")) +
-  labs(x = "datetime", y = "MSY wind mph") +
-  geom_point() + 
-  geom_point(data = Oct_wind, aes(x = datetime, y = speed_mph_rig, color = "rig")) + 
-  labs(x = "datetime", y = "rig wind mph") +
-  geom_line(data = Oct_wind, aes(x = datetime, y = wind_avg_mph, color = "avg")) + 
-  labs(x = "datetime", y = "wind avg mph") +
-  theme_minimal()
-
-ggplot(Oct_wind, aes(x = datetime, y = wind_avg_m_s)) +
-  geom_point() + 
-  geom_line() +
-  scale_color_manual(values = "darkred") + # this is not setting the color
-  labs(x = "datetime", y = "Avg wind speed m/s") +
-  theme_minimal()
-
-```
 
 
 

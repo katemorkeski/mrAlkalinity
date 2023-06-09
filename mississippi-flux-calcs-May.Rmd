@@ -8,7 +8,7 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-#library(readr)
+library(readr)
 library(dplyr)
 library(ggplot2)
 
@@ -49,6 +49,25 @@ may_fug$time_diff = may_fug$date_time_utc - may_fug$date_time_wind
 may_fug <- may_fug %>% 
     select(-date_time_utc) %>% 
     rename(date_time_utc = date_time_wind)
+
+```
+
+# Remove overnight records
+
+```{r}
+
+#Based on GO log sheets, boat was docked 10-11 May 18:50-4:35 local, which is 23:50-09:35 UTC and 1652226540 to 1652261755 numeric
+may_fug$date_time_num <- as.numeric(may_fug$date_time_utc)
+
+may_fug <- may_fug %>% relocate(date_time_num, .before = wind_m_s_MSY)
+
+may_fug <- may_fug %>%
+  mutate(leg = case_when(1652226540 < date_time_num & date_time_num < 1652261755 ~ "dock"))
+
+may_fug <- may_fug %>%
+  filter(is.na(leg)) 
+
+may_fug <- may_fug %>% select(-time_diff, -leg)
 
 ```
 # Calculate U_10
@@ -106,6 +125,10 @@ ggplot(may_fug, aes(x = date_time_utc, y = U_10_MSY, color = "MSY")) +
 temp_C = may_fug$temperature
 sal = may_fug$CTDSAL_PSS78
 
+# rename for plotting
+may_fug <- may_fug %>% 
+      rename(xCO2_dry = "xCO2 dry")
+
 # as check: calculate #Schmidt number for seawater (35 ppt) at 20 C
 Sc = 2116.8 + (-136.25*20) + (4.7353*20^2) + (-0.092307*20^3) + (0.0007555*20^4)
 # Schmidt number for freshwater
@@ -125,17 +148,34 @@ hist(may_fug$k_cm_hr_35ppt)
 hist(may_fug$k_cm_hr_fresh)
 
 # coefficents for Henry's law coefficient for CO2 from Weiss 1974 as reported in Emerson & Hedges with units mol kg-1 atm-1
-A1 = -60.2409 
-A2 = 93.4517 
-A3 = 23.3585 
-B1 = 0.023517 
-B2 = -0.023656 
-B3 = 0.0047035 
+# A1 = -60.2409 
+# A2 = 93.4517 
+# A3 = 23.3585 
+# B1 = 0.023517 
+# B2 = -0.023656 
+# B3 = 0.0047035 
+
+# coefficents for K_sub_0 from Weiss 1974 in units mol L-1 atm-1
+# K' for CO2 from Weiss 1974 as reported in Wanninkhof 2014 with units mol L-1 atm-1
+A1 = -58.0931
+A2 = 90.5069
+A3 = 22.2940
+B1 = 0.027766 
+B2 = -0.025888
+B3 = 0.0050578 
 
 # calculate Henry's law coefficient
-may_fug$Kh_mol_kg = exp(A1+A2*(100/(273.15+temp_C)) + A3*log((273.15+temp_C)/100) +sal*(B1+B2*((273.15+temp_C)/100)+B3*((273.15+temp_C)/100)^2))
+may_fug$Kh_mol_kg_atm = exp(A1+A2*(100/(273.15+temp_C)) + A3*log((273.15+temp_C)/100) +sal*(B1+B2*((273.15+temp_C)/100)+B3*((273.15+temp_C)/100)^2))
 
-hist(may_fug$Kh_mol_kg)
+hist(may_fug$Kh_mol_kg_atm)
+
+may_fug$K_mol_L_atm = exp(A1+A2*(100/(273.15+temp_C)) + A3*log((273.15+temp_C)/100) +sal*(B1+B2*((273.15+temp_C)/100)+B3*((273.15+temp_C)/100)^2))
+
+hist(may_fug$K_mol_L_atm)
+
+# need K' for water saturated gas?
+# need P_H20
+#may_fug$K_prime = may_fug$Kh_mol_kg * may_fug$dfCO2wa / may_fug$xCO2_dry (may_fug$Patm - P_H20)
 
 # check to make sure Kh is calculated correctly. Should be 0.0324
 #Kh = exp(A1+A2*(100/(273.15+20)) + A3*log((273.15+20)/100) +35*(B1+B2*((273.15+20)/100)+B3*((273.15+20)/100)^2))
@@ -144,19 +184,21 @@ hist(may_fug$Kh_mol_kg)
 #exp(0.5) # e^(1/2)
 #log(1)  # natural logarithm
 
+# Wanninkhof 2014 eq. 6 for simplified flux, F, in units mol per m2 per y
+#may_fug$F_direct <- 7.7*10^-4 * may$fug$U_10_MSY * ()#pCO2_water - pCO2_air in uatm
+
 # calculate Flux
-may_fug$F_mM_m2_d_35ppt <- may_fug$k_cm_hr_35ppt * may_fug$Kh_mol_kg * may_fug$dfCO2wa* 24 * 1 *0.01
-may_fug$F_mM_m2_d_fresh <- may_fug$k_cm_hr_fresh * may_fug$Kh_mol_kg * may_fug$dfCO2wa* 24 * 1 *0.01
-may_fug$F_diff <- may_fug$F_mM_m2_d_35ppt - may_fug$F_mM_m2_d_fresh
-hist(may_fug$F_mM_m2_d_35ppt)
-hist(may_fug$F_mM_m2_d_fresh)
-hist(may_fug$F_diff)
+may_fug$F_mol_m2_s_35ppt <- may_fug$k_cm_hr_35ppt * may_fug$K_mol_L_atm * may_fug$dfCO2wa* 1/3600 * 10
+hist(may_fug$F_mol_m2_s_35ppt)
 
-
-# rename for plotting
-may_fug <- may_fug %>% 
-      rename(xCO2_dry = "xCO2 dry")
-
+# calculate Flux 
+# formula from Congo data sheet. need to check units
+# may_fug$F_mM_m2_d_35ppt <- may_fug$k_cm_hr_35ppt * may_fug$Kh_mol_kg_atm * may_fug$dfCO2wa* 24 * 1 *0.01
+# may_fug$F_mM_m2_d_fresh <- may_fug$k_cm_hr_fresh * may_fug$Kh_mol_kg_atm * may_fug$dfCO2wa* 24 * 1 *0.01
+# may_fug$F_diff <- may_fug$F_mM_m2_d_35ppt - may_fug$F_mM_m2_d_fresh
+# hist(may_fug$F_mM_m2_d_35ppt)
+# hist(may_fug$F_mM_m2_d_fresh)
+# hist(may_fug$F_diff)
 
 ```
 # Plot by date time
@@ -188,14 +230,14 @@ ggplot(may_fug, aes(x = date_time_utc, y = dfCO2wa)) +
   labs(x = "date_time_utc", y = "dfCO2", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = date_time_utc, y = F_mM_m2_d_35ppt)) +
-  geom_point() +
-  labs(x = "date_time_utc", y = "F_mM_m2_d", color = "") +
-  theme_minimal()
+# ggplot(may_fug, aes(x = date_time_utc, y = F_mM_m2_d_35ppt)) +
+#   geom_point() +
+#   labs(x = "Date Time UTC", y = "F_mM_m2_d", color = "") +
+#   theme_minimal()
 
-ggplot(may_fug, aes(x = date_time_utc, y = F_mM_m2_d_35ppt, color = "Type")) +
+ggplot(may_fug, aes(x = date_time_utc, y = F_mol_m2_s_35ppt)) +
   geom_point() +
-  labs(x = "Date Time UTC", y = "F_mM_m2_d") +
+  labs(x = "Date Time UTC", y = "F_mol_m2_s", color = "") +
   theme_minimal()
 
 ```
@@ -228,13 +270,14 @@ ggplot(may_fug, aes(x = lat, y = dfCO2wa)) +
   labs(x = "Latitude", y = "dfCO2", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = lat, y = F_mM_m2_d_35ppt)) +
+ggplot(may_fug, aes(x = lat, y = F_mol_m2_s_35ppt)) +
   geom_point() +
-  labs(x = "Latitude", y = "F_mM_m2_d", color = "") +
+  labs(x = "Latitude", y = "F_mol_m2_s", color = "") +
   theme_minimal()
 
 ```
 # Plot by salinity
+
 ```{r}
 
 ggplot(may_fug, aes(x = CTDSAL_PSS78, y = temperature)) +
@@ -257,14 +300,9 @@ ggplot(may_fug, aes(x = CTDSAL_PSS78, y = dfCO2wa)) +
   labs(x = "Salinity CTD", y = "dfCO2", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = CTDSAL_PSS78, y = F_mM_m2_d_35ppt)) +
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = F_mol_m2_s_35ppt)) +
   geom_point() +
-  labs(x = "Salinity CTD", y = "F_mM_m2_d", color = "") +
-  theme_minimal()
-
-ggplot(may_fug, aes(x = CTDSAL_PSS78, y = F_mM_m2_d_35ppt, color = "Type")) +
-  geom_point() +
-  labs(x = "salinity", y = "F_mM_m2_d") +
+  labs(x = "Salinity CTD", y = "F_mol_m2_s", color = "") +
   theme_minimal()
 
 ```
