@@ -40,4 +40,4 @@ vignettes/*.pdf
 
 # data files
 *.xlsx
-*.csv
+#*.csv

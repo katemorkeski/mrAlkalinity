@@ -233,14 +233,14 @@ GO_out <- GO_out %>%
   filter(Type != "SHUT DOWN") 
 
 # write csv
-write.csv(GO_out, here('GO_Mississippi_May.csv'), row.names = FALSE)
+#write.csv(GO_out, here('GO_Mississippi_May.csv'), row.names = FALSE)
 
 ```
 # Read in met data
 
 ```{r}
 
-GO_out <- read_csv('GO_Mississippi_May.csv')
+#GO_out <- read_csv('GO_Mississippi_May.csv')
 
 #https://mesonet.agron.iastate.edu/request/download.phtml?network=LA_ASOS
 # one site is MSY airport and the other Is a rig/platform south of the estuary (named DSF). 
@@ -253,8 +253,8 @@ MSY_met <- rename(MSY_met, datetime = valid)
 # set time zone 
 MSY_met$datetime <- strptime(MSY_met$datetime,"%m/%d/%Y %R")
 rig_met$datetime <- strptime(rig_met$datetime,"%m/%d/%Y %R")
-tz(MSY_met$datetime) <- "America/New_York"
-tz(rig_met$datetime) <- "America/New_York"
+tz(MSY_met$datetime) <- "UTC"
+tz(rig_met$datetime) <- "UTC"
 
 rig_met$alti <- as.numeric(rig_met$alti)
 MSY_met$mslp <- as.numeric(MSY_met$mslp)
@@ -429,27 +429,48 @@ ggplot(May_MSY_met, aes(x = datetime, y = Patm, color = "MSY")) +
 # interpolate atmospheric pressure to GO data time stamps
 
 # read in GO file partially processed with pCO2sys
-GO <- read.csv("MAY_lat_long_temp_sal_Tin_air_Working.csv")
-GO$date_time_utc <- as.POSIXct(GO$date_time_utc, format= "%Y-%m-%d %H:%M:%S")
+#GO <- read.csv("MAY_lat_long_temp_sal_Tin_air_Working.csv")
+#GO$date_time_utc <- as.POSIXct(GO$date_time_utc, format= "%Y-%m-%d %H:%M:%S")
 
-GO_Patm <- data.frame(approx(May_Patm$datetime, May_Patm$Patm_avg, xout = GO$date_time_utc, rule = 2, method = "linear"))
+GO_Patm <- data.frame(approx(May_Patm$datetime, May_Patm$Patm_avg, xout = GO_out$date_time_utc, rule = 2, method = "linear"))
 
-GO <- cbind(GO, GO_Patm)
+GO_out <- cbind(GO_out, GO_Patm)
 
-ggplot(GO, aes(x = x, y = y, color = "Patm")) +
+GO_out <- GO_out %>% 
+  select(-x, -station, -cast, -depth_m) %>%
+  rename(Patm_mbar = y)  
+
+ggplot(GO_out, aes(x = date_time_utc, y = Patm_mbar, color = "Patm")) +
   geom_point() + 
-  geom_point(data = GO, aes(x = date_time_utc, y = licor.press, color = "Plicor")) + 
+  geom_point(data = GO_out, aes(x = date_time_utc, y = licor_press, color = "Plicor")) + 
   theme_minimal()
 
-GO <- GO %>% 
-  select(-x) %>%
-  rename(Patm = y)  
-
-#write file for further processing
-#write.csv(GO, here('MAY_lat_long_temp_sal_Tin_air_Working_Patm.csv'), row.names = FALSE)
-#if this step already done, read in above file
 
 ```
+# get interpolated T and S from previous version of file
+
+```{r}
+
+may_pos_T_S <- read_csv("MAY_Working.csv")
+
+may_pos_T_S <- may_pos_T_S %>% 
+  select(lat, long, temperature, CTDSAL_PSS78)
+
+GO_out <- GO_out %>% 
+  select(-lat, -long, -temperature, -CTDSAL_PSS78)
+
+GO_out <- cbind(GO_out, may_pos_T_S)
+
+```
+
+# write file for pCO2sys
+
+```{r}
+
+write.csv(GO_out, here('GO_Mississippi_May.csv'), na = "-999", row.names = FALSE)
+
+```
+
 # Convert wind speed units and interpolate wind speed
 
 ```{r}
@@ -469,8 +490,8 @@ May_wind$speed_m_s_MSY <- May_wind$speed_mph_MSY*0.44704
 May_wind$speed_m_s_rig <- May_wind$speed_mph_rig*0.44704
 
 # interpolate to GO timestamps
-GO_May_wind_MSY <- data.frame(approx(May_wind$datetime, May_wind$speed_m_s_MSY, xout = GO$date_time_utc, rule = 2, method = "linear"))
-GO_May_wind_rig <- data.frame(approx(May_wind$datetime, May_wind$speed_m_s_rig, xout = GO$date_time_utc, rule = 2, method = "linear"))
+GO_May_wind_MSY <- data.frame(approx(May_wind$datetime, May_wind$speed_m_s_MSY, xout = GO_out$date_time_utc, rule = 2, method = "linear"))
+GO_May_wind_rig <- data.frame(approx(May_wind$datetime, May_wind$speed_m_s_rig, xout = GO_out$date_time_utc, rule = 2, method = "linear"))
 
 GO_May_wind_MSY <- GO_May_wind_MSY %>%
   rename(date_time_utc_MSY = x) %>%
@@ -507,258 +528,3 @@ ggplot(GO_May_wind, aes(x = date_time_utc, y = wind_m_s_MSY, color = "MSY")) +
     theme_minimal()
 
 ```
-############################################## Plotting 
-# read in processed GO data for plotting
-
-```{r}
-
-GO <- read.csv("MAY_lat_long_temp_sal_Tin_air_Working.csv")
-
-# Isolate data from equilibrator
-
-GOplus <- GOplus %>% rename(CO2_ppm = "CO2 um/m")
-
-GO_EQU_plus <- GOplus %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
-
-```
-# Calculate cruise distance
-
-```{r}
-
-GOplus_coord <- GOplus %>% filter(!is.na(long) & !is.na(lat) )
-
-for (i in 1:nrow(GOplus_coord)) {
-  df_lon <- GOplus_coord$long[i]
-  df_lat <- GOplus_coord$lat[i]
-  GOplus_coord$cruise_dist_km <- as.integer(NA)
-  {
-    df_lon_lat <- c(df_lon,df_lat)
-    km_cruise[i] <- distHaversine(c(-89.9587,29.90158), df_lon_lat, r=6378.137)
-  }
-  GOplus_coord$cruise_dist_km <- km_cruise
-  
-}
-
-GOplus_coord_EQU <- GOplus_coord %>% filter(Type == "EQU" | Type == "EQU-DRAIN")
-
-# for (i in 1:nrow(GOplus)) {
-#   df_lon <- GOplus$long[i]
-#   df_lat <- GOplus$lat[i]
-#   GOplus$cruise_dist_km <- as.integer(NA)
-#  
-#   if (is.na(df_lon) & is.na(df_lat)) 
-#     {next}
-#   else
-#   
-#   if (!is.na(df_lon) & !is.na(df_lat)) 
-#     {
-#     df_lon_lat <- c(df_lon,df_lat)
-#     km_cruise[i] <- distHaversine(c(-89.9587,29.90158), df_lon_lat, r=6378.137)}
-#     
-#    GOplus$cruise_dist_km <- km_cruise
-# }
-
-
-ggplot(GOplus_coord_EQU, aes(x = lat, y = CO2_ppm))+
-  geom_point()+
-  theme_minimal()
-
-ggplot(GOplus_coord_EQU, aes(x = cruise_dist_km, y = CO2_ppm))+
-  geom_point()+
-  theme_minimal()
-
-```
-# Plot all GO EQU data
-
-```{r}
-
-ggplot(mouth, aes(x = long, y = lat)) +
-  geom_path() +
-  geom_point(data = GO_EQU_plus, aes(x = long, y = lat, color = CO2_ppm)) + 
-  scale_color_gradient(low="orange", high="darkred") +
-  theme_minimal()  
-
-ggplot(GO_EQU_plus, aes(x = date_time_utc.x, y = CO2_ppm, color = leg))+
-  geom_point()+
-  scale_color_manual(values = c("black", "darkturquoise", "chartreuse3", "yellow", "gray50"))+
-  theme_minimal()
-
-ggplot(GO_EQU_plus, aes(x = date_time_utc.y, y = CO2_ppm, color = leg))+
-  geom_point()+
-  scale_color_manual(values = c("black", "darkturquoise", "chartreuse3", "yellow", "gray50"))+
-  theme_minimal()
-
-
-```
-
-```{r}
-
-#GO_EQU_cruise <- GO_EQU_plus %>% filter(leg != "transit")
-
-```
-
-# Plot data with pre-river data excluded
-
-```{r}
-
-# ggplot(mouth, aes(x = long, y = lat)) +
-#   geom_path() +
-#   geom_point(data = GO_EQU_cruise, aes(x = long, y = lat, color = CO2_ppm)) + 
-#   scale_color_gradient(low="orange", high="darkred") +
-#   theme_minimal()  
-# 
-# ggplot(GO_EQU_cruise, aes(x = date_time_utc.x, y = CO2_ppm, color = leg))+
-#   geom_point()+
-#   scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
-#   theme_minimal()
-# 
-# ggplot(GO_EQU_cruise, aes(x = date_time_utc.y, y = CO2_ppm, color = leg))+
-#   geom_point()+
-#   scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
-#   theme_minimal()
-# 
-# ggplot(GO_EQU_cruise, aes(x = date_time_utc.x, y = temperature, color = leg))+
-#   geom_point()+
-#   scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
-#   theme_minimal()
-# 
-# ggplot(GO_EQU_cruise, aes(x = date_time_utc.x, y = CTDSAL_PSS78, color = leg))+
-#   geom_point()+
-#   scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
-#   theme_minimal()
-# 
-# ggplot(GO_EQU_cruise, aes(x = lat, y = CO2_ppm, color = leg))+
-#   geom_point()+
-#   scale_color_manual(values = c("gray50", "darkturquoise", "chartreuse3", "yellow"))+
-#   theme_minimal()
-
-
-```
-
-# Export file for GO processing
-
-```{r}
-
-# GO_out <- GOplus %>% 
-#   rename("CO2 um/m" = CO2_ppm) %>%
-#   rename(date_time_utc = date_time_utc.x) %>%
-#   select(-ind, -bottlerow, -date_time_utc.y, -row_num, -date_time_num, -time_diff, -time_diff_num, -time_diff_min, -time_diff_hrs)
-# 
-# write.csv(GO_out, here('GO_Mississippi_May.csv'), row.names = FALSE)
-# 
-# GO_out <- GO_out %>% filter(leg != "transit") %>%
-#                     filter(leg != "> 1 hr from station")
-# 
-# write.csv(GO_out, here('GO_Mississippi_May_near_stations.csv'), row.names = FALSE)
-
-```
-
-
-
-```{r}
-
-# combine station and cast later
-
-GOplus <- GOplus %>% filter(leg != "transit") 
-
-GOplus <- GOplus %>% 
-  group_by(station, cast, niskin) %>%
-  mutate(min_time_diff = min(time_diff_num)) %>%
-  ungroup()
-
-closest_niskin <- GOplus %>% 
-  group_by(station, cast, niskin) %>%
-  summarize(min(time_diff_num)) 
-
-GOplus$nearest_niskin <- NA_integer_
-
-GOplus <- GOplus %>%
-  mutate(nearest_niskin = case_when(time_diff_num == min_time_diff ~ niskin))
-
-GOplus <- GOplus %>% 
-  rename(date_time_utc = date_time_utc.x) %>%
-  select(-niskin, -ind, -bottlerow, -date_time_utc.y, -row_num, -date_time_num, -time_diff, -time_diff_num, -time_diff_min, -time_diff_hrs, -min_time_diff)
-
-# remove CTD parameters for non-niskin locations
-GOplus$date_time_utc <- replace(GOplus$date_time_utc, is.na(GOplus$nearest_niskin), NA)
-GOplus$station <- replace(GOplus$station, is.na(GOplus$nearest_niskin), NA)
-GOplus$cast <- replace(GOplus$cast, is.na(GOplus$nearest_niskin), NA)
-GOplus$lat <- replace(GOplus$lat, is.na(GOplus$nearest_niskin), NA)
-GOplus$long <- replace(GOplus$long, is.na(GOplus$nearest_niskin), NA)
-GOplus$temperature <- replace(GOplus$temperature, is.na(GOplus$nearest_niskin), NA)
-GOplus$depth_m <- replace(GOplus$depth_m, is.na(GOplus$nearest_niskin), NA)
-GOplus$CTDSAL_PSS78 <- replace(GOplus$CTDSAL_PSS78, is.na(GOplus$nearest_niskin), NA)
-GOplus$leg <- replace(GOplus$leg, is.na(GOplus$nearest_niskin), NA)
-
-# Check distribution of depth
-hist(GOplus$depth_m)
-
-# check relationship of temperature with depth
-ggplot(GOplus, aes(x = depth_m, y = temperature, color = leg))+
-  geom_point()+
-  theme_minimal()
-# temperature more strongly controlled by habitat than by depth
-
-GO_out <- GOplus %>% 
-  rename("CO2 um/m" = CO2_ppm)
-
-# replace NAs with -999 for Matlab
-GO_out <- GO_out %>% mutate(station = case_when(is.na(station) ~ -999, TRUE ~ station)) %>% 
-  mutate(cast = case_when(is.na(cast) ~ -999, TRUE ~ cast)) %>% 
-  mutate(lat = case_when(is.na(lat) ~ -999, TRUE ~ lat)) %>% 
-  mutate(long = case_when(is.na(long) ~ -999, TRUE ~ long)) %>% 
-  mutate(temperature = case_when(is.na(temperature) ~ -999, TRUE ~ temperature)) %>% 
-  mutate(depth_m = case_when(is.na(depth_m) ~ -999, TRUE ~ depth_m)) %>% 
-  mutate(CTDSAL_PSS78 = case_when(is.na(CTDSAL_PSS78) ~ -999, TRUE ~ CTDSAL_PSS78) )
-
-GO_out <- GO_out %>% 
-  filter(Type != "SHUT DOWN") 
-
-#write.csv(GO_out, here('GO_Mississippi_May.csv'), row.names = FALSE)
-
-```
-
-
-```{r}
-# read in data processed with pCO2 Sys
-
-xCO2 <- read.csv(here('MSP_20220510_Working_inter_stds.csv'))
-
-xCO2_EQU <- xCO2 %>% 
-  filter(Type == "EQU") 
-
-# convert -999 to NA  
-xCO2_EQU <- na_if(xCO2_EQU, "-999")
-
-# calculate difference between corrected and raw CO2
-xCO2_EQU <- xCO2_EQU %>%
-  mutate(xdiff = xCO2.corr - CO2.um.m)
-
-
-```
-
-```{r}
-
-ggplot(xCO2_EQU, aes(x = YDay.Calc, y = xCO2.corr, color = "corrected xCO2"))+
-  geom_point()+
-  geom_point(aes(x = YDay.Calc, y = CO2.um.m, color = "raw CO2 um/m")) +
-  theme_minimal()
-
-ggplot(xCO2_EQU, aes(x = YDay.Calc, y = xdiff)) + geom_point()+theme_minimal()
-
-ggplot(mouth, aes(x = long, y = lat)) +
-  geom_path() +
-  geom_point(data = xCO2_EQU, aes(x = long, y = lat, color = CO2.um.m)) + 
-  scale_color_gradient(low="orange", high="darkred") +
-  theme_minimal() 
-
-
-ggplot(mouth, aes(x = long, y = lat)) +
-  geom_path() +
-  geom_point(data = xCO2_EQU, aes(x = long, y = lat, color = xCO2.corr)) + 
-  scale_color_gradient(low="orange", high="darkred") +
-  theme_minimal()
-
-```
-
-

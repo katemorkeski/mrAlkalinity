@@ -29,6 +29,8 @@ may_fug$date_time_utc <- as.POSIXct(may_fug$date_time_utc, tz = "UTC", format="%
 may_fug <- may_fug %>% 
     select(-"YDay Calc", -"Cruise Day") %>%
     rename(dfCO2wa = "dfCO2(w-a)")
+
+colnames(may_fug) <- gsub(" ", "_", colnames(may_fug))
   
 ```
 # Read in wind data
@@ -125,9 +127,6 @@ ggplot(may_fug, aes(x = date_time_utc, y = U_10_MSY, color = "MSY")) +
 temp_C = may_fug$temperature
 sal = may_fug$CTDSAL_PSS78
 
-# rename for plotting
-may_fug <- may_fug %>% 
-      rename(xCO2_dry = "xCO2 dry")
 
 # as check: calculate #Schmidt number for seawater (35 ppt) at 20 C
 Sc = 2116.8 + (-136.25*20) + (4.7353*20^2) + (-0.092307*20^3) + (0.0007555*20^4)
@@ -185,20 +184,26 @@ hist(may_fug$K_mol_L_atm)
 #log(1)  # natural logarithm
 
 # Wanninkhof 2014 eq. 6 for simplified flux, F, in units mol per m2 per y
-#may_fug$F_direct <- 7.7*10^-4 * may$fug$U_10_MSY * ()#pCO2_water - pCO2_air in uatm
+may_fug$F_direct_micromol_m2_y <- 7.7*10^-4 * may_fug$U_10_MSY * may_fug$dfCO2wa
+may_fug$F_direct_micromol_m2_s <- 7.7*10^-4 * may_fug$U_10_MSY * may_fug$dfCO2wa*(1/365)*(1/24)*(1/3600)
 
 # calculate Flux
-may_fug$F_mol_m2_s_35ppt <- may_fug$k_cm_hr_35ppt * may_fug$K_mol_L_atm * may_fug$dfCO2wa* 1/3600 * 10
-hist(may_fug$F_mol_m2_s_35ppt)
+may_fug$F_mol_m2_s_35ppt <- may_fug$k_cm_hr_35ppt * may_fug$K_mol_L_atm * may_fug$dfCO2wa* (1/100)*(1/3600)*(1000)*(1/10^6)
+may_fug$F_micromol_m2_d_35ppt <- may_fug$k_cm_hr_35ppt * may_fug$K_mol_L_atm * may_fug$dfCO2wa* (24/100)*(1000)
+may_fug$F_mmol_m2_d_35ppt <- may_fug$k_cm_hr_35ppt * may_fug$K_mol_L_atm * may_fug$dfCO2wa* (24/100)*(1000)*(1/1000)
+may_fug$F_micromol_m2_s_35ppt <- may_fug$k_cm_hr_35ppt * may_fug$K_mol_L_atm * may_fug$dfCO2wa* (1/100)*(1/3600)*(1000)
+
+ggplot(may_fug, aes(x = date_time_utc, y = F_mol_m2_s_35ppt)) +  geom_point() +  theme_minimal()
+ggplot(may_fug, aes(x = date_time_utc, y = F_micromol_m2_d_35ppt)) +  geom_point() +  theme_minimal()
+ggplot(may_fug, aes(x = date_time_utc, y = F_mmol_m2_d_35ppt)) +  geom_point() +  theme_minimal()
+ggplot(may_fug, aes(x = date_time_utc, y = F_micromol_m2_s_35ppt)) +  geom_point() +  theme_minimal()
 
 # calculate Flux 
 # formula from Congo data sheet. need to check units
 # may_fug$F_mM_m2_d_35ppt <- may_fug$k_cm_hr_35ppt * may_fug$Kh_mol_kg_atm * may_fug$dfCO2wa* 24 * 1 *0.01
 # may_fug$F_mM_m2_d_fresh <- may_fug$k_cm_hr_fresh * may_fug$Kh_mol_kg_atm * may_fug$dfCO2wa* 24 * 1 *0.01
 # may_fug$F_diff <- may_fug$F_mM_m2_d_35ppt - may_fug$F_mM_m2_d_fresh
-# hist(may_fug$F_mM_m2_d_35ppt)
-# hist(may_fug$F_mM_m2_d_fresh)
-# hist(may_fug$F_diff)
+#
 
 ```
 # Plot by date time
@@ -234,6 +239,11 @@ ggplot(may_fug, aes(x = date_time_utc, y = dfCO2wa)) +
 #   geom_point() +
 #   labs(x = "Date Time UTC", y = "F_mM_m2_d", color = "") +
 #   theme_minimal()
+
+ggplot(may_fug, aes(x = date_time_utc, y = F_direct_micromol_m2_y)) +
+  geom_point() +
+  labs(x = "Date Time UTC", y = "F_direct", color = "") +
+  theme_minimal()
 
 ggplot(may_fug, aes(x = date_time_utc, y = F_mol_m2_s_35ppt)) +
   geom_point() +
@@ -304,6 +314,35 @@ ggplot(may_fug, aes(x = CTDSAL_PSS78, y = F_mol_m2_s_35ppt)) +
   geom_point() +
   labs(x = "Salinity CTD", y = "F_mol_m2_s", color = "") +
   theme_minimal()
+
+```
+# write summary file
+
+```{r}
+
+may_summary <- may_fug %>%
+  select(date_time_utc, lat, long, Patm, temperature, Tin_interp, CTDSAL_PSS78, Type, xCO2_dry, Std_Offset, xCO2_corr, xCO2_interp_corr, xCO2A_Corrected, fCO2_water, fCO2_interp, dfCO2wa, U_10_MSY, Sc_35ppt, k_cm_hr_35ppt, K_mol_L_atm, F_mol_m2_s_35ppt, F_mmol_m2_d_35ppt, F_micromol_m2_s_35ppt)
+
+may_summary <- may_summary %>%
+  rename(Latitude = lat, 
+         Longitude = long, 
+         Patm_mbar = Patm,
+         Temperature_raw_C = temperature,
+         Temperature_adj_C = Tin_interp,
+         xCO2_dry_ppm = xCO2_dry, 
+         Std_Offset_ppm = Std_Offset, 
+         xCO2_EQU_corr_ppm = xCO2_corr, 
+         xCO2_ATM_interp_ppm = xCO2_interp_corr, 
+         xCO2_ATM_ppm = xCO2A_Corrected, 
+         fCO2_water_microatm = fCO2_water, 
+         fCO2_ATM_interp_microatm = fCO2_interp, 
+         dfCO2_microatm = dfCO2wa, 
+         U_10_MSY_m_s = U_10_MSY,
+         F_mol_m2_s = F_mol_m2_s_35ppt,
+         F_mmol_m2_d = F_mmol_m2_d_35ppt,
+         F_micromol_m2_s = F_micromol_m2_s_35ppt)
+
+write.csv(may_summary, here('Mississippi_CO2_flux_May.csv'), row.names = FALSE)
 
 ```
 

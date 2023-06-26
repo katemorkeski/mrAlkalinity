@@ -681,18 +681,18 @@ ggplot(GO_Oct_EQU, aes(x = date_time_utc, y = CO2_ppm))+
 
 ```{r}
 
-GO_Oct_ATM <- GO_Oct %>% filter(Type == "ATM" | Type == "ATM-DRAIN")
-
-ggplot(GO_Oct_ATM, aes(x = date_time_gmt, y = CO2_ppm))+
-  geom_point()+
-  theme_minimal()
-
-GO_Oct_STD <- GO_Oct %>% 
-  filter(Type == "STD1" | Type == "STD1-DRAIN" | Type == "STD2" | Type == "STD2-DRAIN" | Type == "STD3" | Type == "STD3-DRAIN" | Type == "STD4" | Type == "STD4-DRAIN" )
-
-ggplot(GO_Oct_STD, aes(x = date_time_gmt, y = CO2_ppm))+
-  geom_point()+
-  theme_minimal()
+# GO_Oct_ATM <- GO_Oct %>% filter(Type == "ATM" | Type == "ATM-DRAIN")
+# 
+# ggplot(GO_Oct_ATM, aes(x = date_time_gmt, y = CO2_ppm))+
+#   geom_point()+
+#   theme_minimal()
+# 
+# GO_Oct_STD <- GO_Oct %>% 
+#   filter(Type == "STD1" | Type == "STD1-DRAIN" | Type == "STD2" | Type == "STD2-DRAIN" | Type == "STD3" | Type == "STD3-DRAIN" | Type == "STD4" | Type == "STD4-DRAIN" )
+# 
+# ggplot(GO_Oct_STD, aes(x = date_time_gmt, y = CO2_ppm))+
+#   geom_point()+
+#   theme_minimal()
 
 ```
 
@@ -795,15 +795,29 @@ GO_out <- GO_out %>%
          
 ```
 
+# interpolate station T and S 
+
+```{r}
+
+temp_interp <- data.frame(approx(ctd_check$date_time_utc, ctd_check$temperature, xout = GO_out$date_time_utc, rule = 2, method = "linear"))
+GO_out <- cbind(GO_out, temp_interp)
+GO_out <- GO_out %>% select(-x, -temperature) %>% rename(temperature = y)  
+
+sal_interp <- data.frame(approx(ctd_check$date_time_utc, ctd_check$CTDSAL_PSS78, xout = GO_out$date_time_utc, rule = 2, method = "linear"))
+GO_out <- cbind(GO_out, sal_interp)
+GO_out <- GO_out %>% select(-x, -CTDSAL_PSS78) %>% rename(CTDSAL_PSS78 = y)  
+
+
+```
+
+
 # write file for pCO2sys
 
 ```{r}
 
-GO_out <- GO_out %>% 
-  mutate(temperature = case_when(is.na(temperature) ~ -999, TRUE ~ temperature)) %>% 
-  mutate(CTDSAL_PSS78 = case_when(is.na(CTDSAL_PSS78) ~ -999, TRUE ~ CTDSAL_PSS78) )
+write.csv(GO_out, here('GO_Mississippi_Oct_NaN.csv'), na = "NaN", row.names = FALSE)
 
-write.csv(GO_out, here('GO_Mississippi_Oct.csv'), row.names = FALSE)
+write.csv(GO_out, here('GO_Mississippi_Oct_999.csv'), na = "-999", row.names = FALSE)
 
 ```
 
