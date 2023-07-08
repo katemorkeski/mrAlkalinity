@@ -1,0 +1,99 @@
+---
+title: "Mississippi-flow"
+author: "Kate Morkeski"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+
+library(here)
+library(readxl)
+library(tidyverse)
+library(geosphere)
+library(lubridate)
+
+```
+## May cruise
+
+# Read in CTD and bottle data
+
+```{r}
+
+# 2022 flow data from USGS Belle Chasse station
+Q_cfs <- read.delim(here('Q_data_Belle_Chasse.txt')) 
+
+Q_cfs <- Q_cfs[-1,]
+
+Q_cfs$datetime <- ymd(Q_cfs$datetime)
+Q_cfs$day <- julian(Q_cfs$datetime) - 18992
+
+
+Q_cfs <- Q_cfs %>%
+  rename(Q_ft3_s = X61182_00060_00003) %>%
+  rename(Approved_estimated = X61182_00060_00003_cd)
+
+Q_cfs$Q_ft3_s <- as.numeric(Q_cfs$Q_ft3_s)
+
+write.csv(Q_cfs, here('Mississippi_flow_Belle_Chasse_2022.csv'), row.names = FALSE)
+
+# Q_2021 <- read.delim(here('Q_2021.txt'), skip = 27) 
+# 
+# Q_2021 <- Q_2021[-1,]
+# 
+# Q_2021$datetime <- ymd(Q_2021$datetime)
+# Q_2021$day <- julian(Q_2021$datetime)- 18627
+# Q_2021$Q_ft3_s <- as.numeric(Q_2021$X61182_00060_00003)
+# 
+# Q_2021 <- Q_2021 %>%
+#   rename(Approved_estimated = X61182_00060_00003_cd)
+
+Q_mean <- read.delim(here('mean-daily-Q-Belle-Chasse.txt'), skip = 44) 
+
+Q_mean <- Q_mean[-1,]
+
+Q_mean$one <- 1
+Q_mean$day <- cumsum(Q_mean$one)
+
+Q_mean$p50_va <- as.numeric(Q_mean$p50_va)
+
+Q_mean$p10_va <- as.numeric(Q_mean$p10_va)
+
+Q_mean$p90_va <- as.numeric(Q_mean$p90_va)
+Q_mean$min_va <- as.numeric(Q_mean$min_va)
+
+write.csv(Q_mean, here('Mississippi_flow_Belle_Chasse_daily_stats.csv'), row.names = FALSE)
+
+spring_date <- data.frame(day = 130, Q_ft3_s = 702000-40000)
+fall_date <- data.frame(day = 284, Q_ft3_s = 146000-40000)
+
+```
+
+## Plots
+
+```{r}
+
+ggplot(Q_mean, aes(x = day, y = p10_va, color = "10th pct")) + geom_line(size = 0.5) +
+     geom_line(data = Q_mean, aes(x = day, y = p50_va, color = "50th pct"), size = 0.5) +
+  geom_line(data = Q_mean, aes(x = day, y = p90_va, color = "90th pct"), size = 0.5) +
+  geom_line(data = Q_cfs, aes(x = day, y = Q_ft3_s, color = "2022"), size = 1.2) +
+    scale_color_manual(values = c("red4", "gray", "royalblue", "navy", "purple", "goldenrod1"), name = NULL, breaks = c("10th pct","50th pct", "90th pct", "2022"))+
+    labs(x = "Day of Year", y = "Discharge (cubic feet per second)", title = "Mississippi River flow at Belle Chasse, 2022 vs 2009-2023 daily mean", subtitle = "waterdata.usgs.gov/nwis") +
+  guides(fill = c("legend", "legend", "legend", "legend","none", "none"))+
+  theme(line = element_line(size = 0.7), axis.title = element_text(size = 12, face = "bold"), axis.text = element_text(size = 10), legend.title = element_text(size = 12, face = 2), legend.text = element_text(size = 12))+
+  theme_minimal()+
+  annotate(geom = "text", x = 130, y = 702000-45000, label = "MAY", color = "purple")+
+  annotate(geom = "text", x = 284-3, y = 146000-45000, label = "OCT", color = "goldenrod1")+
+  scale_y_continuous(limits = c(10000, 1250000))
+
+ggsave("Flow_Belle_Chasse.png")
+  
+
+```
+
+

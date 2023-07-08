@@ -11,6 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(readr)
 library(dplyr)
 library(ggplot2)
+library(here)
 
 ```
 
@@ -206,6 +207,23 @@ ggplot(may_fug, aes(x = date_time_utc, y = F_micromol_m2_s_35ppt)) +  geom_point
 #
 
 ```
+
+# Add cruise leg label
+```{r}
+# mapping <- mapping %>%
+#   mutate(leg = case_when(station <10 ~ "river",
+#                          station == 10 ~ "gulf",
+#                          station > 14 ~ "gulf",
+#                          TRUE ~ "spur"))
+
+may_fug <- may_fug %>%
+  mutate(leg = case_when(CTDSAL_PSS78 <2.5 ~ "fresh",
+                         CTDSAL_PSS78 > 2.5 & CTDSAL_PSS78 <34 ~ "plume",
+                         CTDSAL_PSS78 > 34 ~ "gulf",
+                         TRUE ~ "transit"))
+```
+
+
 # Plot by date time
 
 ```{r}
@@ -225,7 +243,7 @@ ggplot(may_fug, aes(x = date_time_utc, y = Patm)) +
   labs(x = "date_time_utc", y = "Atmospheric pressure mbar", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = date_time_utc, y = xCO2_dry)) +
+ggplot(may_fug, aes(x = date_time_utc, y = xCO2_dry, color = leg)) +
   geom_point() +
   labs(x = "date_time_utc", y = "XCO2_dry", color = "") +
   theme_minimal()
@@ -255,32 +273,32 @@ ggplot(may_fug, aes(x = date_time_utc, y = F_mol_m2_s_35ppt)) +
 
 ```{r}
 
-ggplot(may_fug, aes(x = lat, y = temperature)) +
+ggplot(may_fug, aes(x = lat, y = temperature, color = leg)) +
   geom_point() +
   labs(x = "Latitude", y = "Temperature", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = lat, y = CTDSAL_PSS78)) +
+ggplot(may_fug, aes(x = lat, y = CTDSAL_PSS78, color =leg)) +
   geom_point() +
   labs(x = "Latitude", y = "Salinity CTD", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = lat, y = Patm)) +
+ggplot(may_fug, aes(x = lat, y = Patm, color = leg)) +
   geom_point() +
   labs(x = "Latitude", y = "Atmospheric pressure mbar", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = lat, y = xCO2_dry)) +
+ggplot(may_fug, aes(x = lat, y = xCO2_dry, color = leg)) +
   geom_point() +
   labs(x = "Latitude", y = "XCO2_dry", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = lat, y = dfCO2wa)) +
+ggplot(may_fug, aes(x = lat, y = dfCO2wa, color = leg)) +
   geom_point() +
   labs(x = "Latitude", y = "dfCO2", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = lat, y = F_mol_m2_s_35ppt)) +
+ggplot(may_fug, aes(x = lat, y = F_mol_m2_s_35ppt, color = leg)) +
   geom_point() +
   labs(x = "Latitude", y = "F_mol_m2_s", color = "") +
   theme_minimal()
@@ -290,27 +308,27 @@ ggplot(may_fug, aes(x = lat, y = F_mol_m2_s_35ppt)) +
 
 ```{r}
 
-ggplot(may_fug, aes(x = CTDSAL_PSS78, y = temperature)) +
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = temperature, color = leg)) +
   geom_point() +
   labs(x = "Salinity CTD", y = "Temperature", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = CTDSAL_PSS78, y = Patm)) +
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = Patm, color = leg)) +
   geom_point() +
   labs(x = "Salinity CTD", y = "Atmospheric pressure mbar", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = CTDSAL_PSS78, y = xCO2_dry)) +
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = xCO2_dry, color = leg)) +
   geom_point() +
   labs(x = "Salinity CTD", y = "XCO2_dry", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = CTDSAL_PSS78, y = dfCO2wa)) +
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = dfCO2wa, color = leg)) +
   geom_point() +
   labs(x = "Salinity CTD", y = "dfCO2", color = "") +
   theme_minimal()
 
-ggplot(may_fug, aes(x = CTDSAL_PSS78, y = F_mol_m2_s_35ppt)) +
+ggplot(may_fug, aes(x = CTDSAL_PSS78, y = F_mol_m2_s_35ppt, color = leg)) +
   geom_point() +
   labs(x = "Salinity CTD", y = "F_mol_m2_s", color = "") +
   theme_minimal()
@@ -321,7 +339,7 @@ ggplot(may_fug, aes(x = CTDSAL_PSS78, y = F_mol_m2_s_35ppt)) +
 ```{r}
 
 may_summary <- may_fug %>%
-  select(date_time_utc, lat, long, Patm, temperature, Tin_interp, CTDSAL_PSS78, Type, xCO2_dry, Std_Offset, xCO2_corr, xCO2_interp_corr, xCO2A_Corrected, fCO2_water, fCO2_interp, dfCO2wa, U_10_MSY, Sc_35ppt, k_cm_hr_35ppt, K_mol_L_atm, F_mol_m2_s_35ppt, F_mmol_m2_d_35ppt, F_micromol_m2_s_35ppt)
+  select(date_time_utc, lat, long, Patm, temperature, Tin_interp, CTDSAL_PSS78, leg, Type, xCO2_dry, Std_Offset, xCO2_corr, xCO2_interp_corr, xCO2A_Corrected, fCO2_water, fCO2_interp, dfCO2wa, U_10_MSY, Sc_35ppt, k_cm_hr_35ppt, K_mol_L_atm, F_mol_m2_s_35ppt, F_mmol_m2_d_35ppt, F_micromol_m2_s_35ppt)
 
 may_summary <- may_summary %>%
   rename(Latitude = lat, 

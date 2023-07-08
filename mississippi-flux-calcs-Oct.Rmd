@@ -1,0 +1,309 @@
+---
+title: "mississippi-flux-calcs-Oct"
+author: "Kate Morkeski"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(here)
+
+```
+
+# Read in fugacity data generated with pCO2sys
+
+```{r}
+
+oct_fug <- read_csv("OCT_atm_flagged_Working.csv")
+
+oct_fug[oct_fug==-999]<-NA
+
+#  rename columns
+oct_fug <- oct_fug %>% 
+    rename(dfCO2wa = "dfCO2(w-a)",
+           wind_m_s_MSY = speed_m_s_MSY)
+
+colnames(oct_fug) <- gsub(" ", "_", colnames(oct_fug))
+  
+```
+
+# Calculate U_10
+
+```{r}
+
+# MSY elevation is 9 m
+# DSF elevation is 0 m
+
+# use wind speed to calculate U_10 based on Large and Pond (1981) as reprinted in Yu et al 2020
+oct_fug$U_10_MSY = oct_fug$wind_m_s_MSY / (1 + (sqrt(0.0011)/0.4) * log(9/10))
+
+# plot wind speed
+ggplot(oct_fug, aes(x = date_time_utc, y = wind_m_s_MSY)) +
+  labs(x = "datetime", y = "wind speed m/s") +
+  geom_point() + 
+    theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = U_10_MSY)) +
+  labs(x = "datetime", y = "U10") +
+  geom_point() + 
+   theme_minimal()
+  
+```
+
+
+# Add gas transfer velocity, solubility, and flux
+
+```{r}
+
+temp_C = oct_fug$temperature
+sal = oct_fug$CTDSAL_PSS78
+
+# as check: calculate #Schmidt number for seawater (35 ppt) at 20 C
+Sc = 2116.8 + (-136.25*20) + (4.7353*20^2) + (-0.092307*20^3) + (0.0007555*20^4)
+# Schmidt number for freshwater
+Sc_fresh = 1923.6 + (-125.06*20) + (4.3773*20^2) + (-0.085681*20^3) + (0.00070284*20^4)
+
+# calculate seawater Schmidt number at measured temp
+oct_fug$Sc_35ppt = 2116.8 + (-136.25*temp_C) + (4.7353*temp_C^2) + (-0.092307*temp_C^3) + (0.0007555*temp_C^4)
+# calculate freshwater  Schmidt number at measured temp
+oct_fug$Sc_fresh = 1923.6 + (-125.06*temp_C) + (4.3773*temp_C^2) + (-0.085681*temp_C^3) + (0.00070284*temp_C^4)
+
+# calculate gas transfer velocity, k, in cm per hr
+# use U_10 only from MSY for now
+oct_fug$k_cm_hr_35ppt = 0.251*oct_fug$U_10_MSY*((oct_fug$Sc_35ppt/660)^-0.5)
+oct_fug$k_cm_hr_fresh = 0.251*oct_fug$U_10_MSY*((oct_fug$Sc_fresh/660)^-0.5)
+
+hist(oct_fug$k_cm_hr_35ppt)
+hist(oct_fug$k_cm_hr_fresh)
+
+# coefficents for Henry's law coefficient for CO2 from Weiss 1974 as reported in Emerson & Hedges with units mol kg-1 atm-1
+# A1 = -60.2409 
+# A2 = 93.4517 
+# A3 = 23.3585 
+# B1 = 0.023517 
+# B2 = -0.023656 
+# B3 = 0.0047035 
+
+# coefficents for K_sub_0 from Weiss 1974 in units mol L-1 atm-1
+# K' for CO2 from Weiss 1974 as reported in Wanninkhof 2014 with units mol L-1 atm-1
+A1 = -58.0931
+A2 = 90.5069
+A3 = 22.2940
+B1 = 0.027766 
+B2 = -0.025888
+B3 = 0.0050578 
+
+# calculate Henry's law coefficient
+oct_fug$Kh_mol_kg_atm = exp(A1+A2*(100/(273.15+temp_C)) + A3*log((273.15+temp_C)/100) +sal*(B1+B2*((273.15+temp_C)/100)+B3*((273.15+temp_C)/100)^2))
+
+hist(oct_fug$Kh_mol_kg_atm)
+
+oct_fug$K_mol_L_atm = exp(A1+A2*(100/(273.15+temp_C)) + A3*log((273.15+temp_C)/100) +sal*(B1+B2*((273.15+temp_C)/100)+B3*((273.15+temp_C)/100)^2))
+
+hist(oct_fug$K_mol_L_atm)
+
+# need K' for water saturated gas?
+# need P_H20
+#oct_fug$K_prime = oct_fug$Kh_mol_kg * oct_fug$dfCO2wa / oct_fug$xCO2_dry (oct_fug$Patm - P_H20)
+
+# check to make sure Kh is calculated correctly. Should be 0.0324
+#Kh = exp(A1+A2*(100/(273.15+20)) + A3*log((273.15+20)/100) +35*(B1+B2*((273.15+20)/100)+B3*((273.15+20)/100)^2))
+
+# R syntax for natural log and e
+#exp(0.5) # e^(1/2)
+#log(1)  # natural logarithm
+
+# Wanninkhof 2014 eq. 6 for simplified flux, F, in units mol per m2 per y
+#oct_fug$F_direct <- 7.7*10^-4 * oct$fug$U_10_MSY * ()#pCO2_water - pCO2_air in uatm
+
+# calculate Flux
+oct_fug$F_mol_m2_s_35ppt <- oct_fug$k_cm_hr_35ppt * oct_fug$K_mol_L_atm * oct_fug$dfCO2wa* (1/100)*(1/3600)*(1000)*(1/10^6)
+oct_fug$F_micromol_m2_d_35ppt <- oct_fug$k_cm_hr_35ppt * oct_fug$K_mol_L_atm * oct_fug$dfCO2wa* (24/100)*(1000)
+oct_fug$F_mmol_m2_d_35ppt <- oct_fug$k_cm_hr_35ppt * oct_fug$K_mol_L_atm * oct_fug$dfCO2wa* (24/100)*(1000)*(1/1000)
+oct_fug$F_micromol_m2_s_35ppt <- oct_fug$k_cm_hr_35ppt * oct_fug$K_mol_L_atm * oct_fug$dfCO2wa* (1/100)*(1/3600)*(1000)
+
+ggplot(oct_fug, aes(x = date_time_utc, y = F_mol_m2_s_35ppt)) +  geom_point() +  theme_minimal()
+ggplot(oct_fug, aes(x = date_time_utc, y = F_micromol_m2_d_35ppt)) +  geom_point() +  theme_minimal()
+ggplot(oct_fug, aes(x = date_time_utc, y = F_mmol_m2_d_35ppt)) +  geom_point() +  theme_minimal()
+ggplot(oct_fug, aes(x = date_time_utc, y = F_micromol_m2_s_35ppt)) +  geom_point() +  theme_minimal()
+
+# calculate Flux 
+# formula from Congo data sheet. need to check units
+# oct_fug$F_mM_m2_d_35ppt <- oct_fug$k_cm_hr_35ppt * oct_fug$Kh_mol_kg_atm * oct_fug$dfCO2wa* 24 * 1 *0.01
+# oct_fug$F_mM_m2_d_fresh <- oct_fug$k_cm_hr_fresh * oct_fug$Kh_mol_kg_atm * oct_fug$dfCO2wa* 24 * 1 *0.01
+# oct_fug$F_diff <- oct_fug$F_mM_m2_d_35ppt - oct_fug$F_mM_m2_d_fresh
+# hist(oct_fug$F_mM_m2_d_35ppt)
+# hist(oct_fug$F_mM_m2_d_fresh)
+# hist(oct_fug$F_diff)
+
+
+```
+# Add cruise leg label
+
+```{r}
+
+oct_fug <- oct_fug %>%
+  mutate(leg = case_when(CTDSAL_PSS78 <2.5 ~ "fresh",
+                         CTDSAL_PSS78 > 2.5 & CTDSAL_PSS78 <34 ~ "plume",
+                         CTDSAL_PSS78 > 34 ~ "gulf"))
+
+```
+
+# Plot by date time
+
+```{r}
+
+ggplot(oct_fug, aes(x = date_time_utc, y = temperature, color = leg)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "Temperature", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = CTDSAL_PSS78, color = leg)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "Salinity CTD", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = Patm_mbar, color = leg)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "Atmospheric pressure mbar", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = Patm_atm, color = leg)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "Atmospheric pressure atm", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = xCO2_dry, color = leg)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "XCO2_dry_micromol/mol", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = xCO2_dry, color = leg)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "XCO2_dry_micromol/mol", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = fCO2_water/1000, color = leg)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "fCO2 H20 atm", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = fCO2_air/1000000, color = leg)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "fCO2 air atm", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = fCO2_interp/1000000, color = leg)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "fCO2 interp atm", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = dfCO2wa/1000000, color = leg)) +
+  geom_point() +
+  labs(x = "date_time_utc", y = "dfCO2_atm", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = date_time_utc, y = F_mol_m2_s_35ppt, color = leg)) +
+  geom_point() +
+  labs(x = "Date Time UTC", y = "F_mol_m2_s", color = "") +
+  theme_minimal()
+
+```
+# Plot by latitude
+
+```{r}
+
+ggplot(oct_fug, aes(x = Latitude, y = temperature, color = leg)) +
+  geom_point() +
+  labs(x = "Latitude", y = "Temperature", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = Latitude, y = CTDSAL_PSS78, color = leg)) +
+  geom_point() +
+  labs(x = "Latitude", y = "Salinity CTD", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = Latitude, y = Patm_mbar, color = leg)) +
+  geom_point() +
+  labs(x = "Latitude", y = "Atmospheric pressure mbar", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = Latitude, y = xCO2_dry, color = leg)) +
+  geom_point() +
+  labs(x = "Latitude", y = "XCO2_dry", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = Latitude, y = dfCO2wa, color = leg)) +
+  geom_point() +
+  labs(x = "Latitude", y = "dfCO2", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = Latitude, y = F_mol_m2_s_35ppt, color = CTDSAL_PSS78)) +
+  geom_point() +
+  labs(x = "Latitude", y = "F_mol_m2_s") +
+  theme_minimal()
+
+```
+# Plot by salinity
+
+```{r}
+
+ggplot(oct_fug, aes(x = CTDSAL_PSS78, y = temperature, color = leg)) +
+  geom_point() +
+  labs(x = "Salinity CTD", y = "Temperature", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = CTDSAL_PSS78, y = Patm_mbar, color = leg)) +
+  geom_point() +
+  labs(x = "Salinity CTD", y = "Atmospheric pressure mbar", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = CTDSAL_PSS78, y = xCO2_dry, color = leg)) +
+  geom_point() +
+  labs(x = "Salinity CTD", y = "XCO2_dry", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = CTDSAL_PSS78, y = dfCO2wa, color = leg)) +
+  geom_point() +
+  labs(x = "Salinity CTD", y = "dfCO2", color = "") +
+  theme_minimal()
+
+ggplot(oct_fug, aes(x = CTDSAL_PSS78, y = F_mol_m2_s_35ppt, color = leg)) +
+  geom_point() +
+  labs(x = "Salinity CTD", y = "F_mol_m2_s", color = "") +
+  theme_minimal()
+
+```
+# write summary file
+
+```{r}
+
+oct_summary <- oct_fug %>%
+  select(date_time_utc, Latitude, Longitude, Patm_mbar, temperature, Tin_interp, CTDSAL_PSS78, leg, Type, xCO2_dry, Std_Offset, xCO2_corr, xCO2_interp_corr, xCO2A_Corrected, fCO2_water, fCO2_interp, dfCO2wa, U_10_MSY, Sc_35ppt, k_cm_hr_35ppt, K_mol_L_atm, F_mol_m2_s_35ppt, F_mmol_m2_d_35ppt, F_micromol_m2_s_35ppt)
+
+oct_summary <- oct_summary %>%
+  rename(Temperature_raw_C = temperature,
+         Temperature_adj_C = Tin_interp,
+         xCO2_dry_ppm = xCO2_dry, 
+         Std_Offset_ppm = Std_Offset, 
+         xCO2_EQU_corr_ppm = xCO2_corr, 
+         xCO2_ATM_interp_ppm = xCO2_interp_corr, 
+         xCO2_ATM_ppm = xCO2A_Corrected, 
+         fCO2_water_microatm = fCO2_water, 
+         fCO2_ATM_interp_microatm = fCO2_interp, 
+         dfCO2_microatm = dfCO2wa, 
+         U_10_MSY_m_s = U_10_MSY,
+         F_mol_m2_s = F_mol_m2_s_35ppt,
+         F_mmol_m2_d = F_mmol_m2_d_35ppt,
+         F_micromol_m2_s = F_micromol_m2_s_35ppt)
+
+write.csv(oct_summary, here('Mississippi_CO2_flux_Oct.csv'), row.names = FALSE)
+
+```
+
+

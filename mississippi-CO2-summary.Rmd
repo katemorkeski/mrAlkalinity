@@ -44,13 +44,13 @@ oct_EQU <- oct %>%
 for (i in 1:nrow(may)) {
   start_lon <- may$Longitude[i]
   start_lat <- may$Latitude[i]
-  next_lon <- may$Longitude[i+1]
-  next_lat <- may$Latitude[i+1]
   may$inc_dist_km[i] <- as.numeric(NA)
   # add an if to skip the row if df lon and/or lat is NA
   if (!is.na(start_lon) & !is.na(start_lat)) {
-    start_lon_lat <- c(start_lon,start_lat)
-    next_lon_lat <- c(next_lon, next_lat)}
+  next_lon <- may$Longitude[i+1]
+  next_lat <- may$Latitude[i+1]
+  start_lon_lat <- c(start_lon,start_lat)
+  next_lon_lat <- c(next_lon, next_lat)}
     may$inc_dist_km[i] <- distHaversine(start_lon_lat, next_lon_lat, r=6378.137)
      }
 
