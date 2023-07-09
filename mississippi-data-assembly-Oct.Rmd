@@ -86,14 +86,14 @@ ggplot(mouth, aes(x = long, y = lat)) +
 
 ggplot(mouth, aes(x = long, y = lat)) +
   geom_path() +
-  geom_text(data = mapping, aes(x = long, y = lat, label = station)) +  
-  theme_minimal()
+  geom_text(data = mapping, aes(x = long, y = lat, label = station)) 
+ggsave('Oct_station_map_all.png')
 
 ggplot(mouth, aes(x = long, y = lat)) +
   geom_path() +
   geom_text(data = mapping, aes(x = long, y = lat, label = station), size = 3) +  
-  coord_fixed(xlim = c(-90.0, -89.25), ylim = c(28.5, 29.25))+
-  theme_minimal()
+  coord_fixed(xlim = c(-90.0, -89.25), ylim = c(28.5, 29.25))
+ggsave('Oct_station_map_plume.png')
 
 ggplot(mouth, aes(x = long, y = lat)) +
   geom_path() +
